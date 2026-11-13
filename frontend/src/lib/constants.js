@@ -1,83 +1,60 @@
-import { HOME_GUILD } from "../services/mockData.js";
+export const DEFAULT_BOT = "Community bot";
 
-export { HOME_GUILD };
-export const BOT_CLIENT_ID = "1565126862714175620";
-export const BOT_PERMS = "247952";
-export const INSTALL_URL = `https://discord.com/oauth2/authorize?client_id=${BOT_CLIENT_ID}&scope=bot%20applications.commands&permissions=${BOT_PERMS}`;
-
-export const DEFAULT_BOT = "hayfa - community lead";
-export const DEFAULT_TONE = "lowercase, short and hype (YAYYY, lessgoooo), one emoji at the end, no trailing x.";
-
+/** App pages by URL hash. */
 export const TABS = {
-  overview: "Overview",
-  content: "Content",
-  community: "Community",
-  automations: "Automations",
+  dashboard: "Dashboard",
+  analytics: "Analytics",
   approvals: "Approvals",
-  onboarding: "Onboarding",
-  setup: "Bot & channels",
-  welcome: "Setup guide",
+  automations: "Automations",
+  "automation-builder": "Custom automation",
+  onboarding: "Onboarding & DMs",
+  content: "Content",
+  workspace: "Settings",
 };
-export const SHOP_TABS = ["overview", "content", "community"];
-export const DISCORD_TABS = ["automations", "approvals", "onboarding", "setup"];
+
+export const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+export const MENTIONS = [["@here", "@here"], ["@everyone", "@everyone"], ["none", "No mention"]];
 
 export const AUTOS = [
   {
-    key: "general_chat", n: "01", name: "General chat manager",
-    what: "Replies in the community lead’s voice. Flags risky topics.", hint: [],
-    defaults: { mode: "flag", replyTo: "all", dailyCap: 300, escalate: "refunds, missing commission, payment, complaints, legal, medical claims", quietStart: "", quietEnd: "" },
+    key: "general_chat", n: "01", name: "General chat manager", live: true,
+    what: "Replies to creators in your voice. Risky topics go to mods.", hint: ["general-chat", "general"],
+    defaults: { replyTo: "questions", dailyCap: 300, escalate: "refunds, missing commission, payment, complaints, legal, medical claims", voice: "" },
   },
   {
-    key: "viral_hooks", n: "02", name: "Viral hooks & angles", skill: "discord-tvc-viral-hooks-and-angles",
-    what: "Top 3 market videos of the week and how to remake them.", hint: ["viral-hooks", "viral"],
-    defaults: { mode: "manual", days: ["Mon", "Tue", "Wed"], time: "14:00", lookback: 7, count: 1, everyone: true },
+    key: "viral_hooks", n: "02", name: "Viral hooks",
+    what: "The niche’s most-viewed videos from last week, with how to remake the hook.", hint: ["viral-hooks-and-ideas", "viral-hooks", "viral"],
+    defaults: { mode: "manual", days: ["Mon", "Tue", "Wed"], time: "14:00", lookback: 7, mention: "@here", voice: "" },
   },
   {
-    key: "winning_content", n: "03", name: "Winning angle of the week", skill: "tvc-discord-community-weekly-angle-of-the-week",
-    what: "Last week’s top 3 videos by GMV, with remake guides.", hint: ["winning-angles", "winning"],
-    defaults: { mode: "manual", days: ["Mon", "Tue", "Wed"], time: "12:00", count: 3, tagCreator: true, everyone: true, parts: ["Video post", "Numbers card", "Script card", "How to replicate"] },
+    key: "winning_content", n: "03", name: "Winning angle of the week",
+    what: "Last week’s top video by GMV: numbers, script and how to replicate it.", hint: ["winning-angles", "winning"],
+    defaults: { mode: "manual", days: ["Mon", "Tue", "Wed"], time: "12:00", mention: "@here", parts: ["Video post", "Numbers card", "Script card", "How to replicate"], voice: "" },
   },
   {
-    key: "wins", n: "04", name: "Creator wins", skill: "discord-tvc-creator-wins",
-    what: "Celebrates 1st, 3rd, 10th, 30th and 50th sales.", hint: ["share-wins", "wins"],
-    defaults: { mode: "manual", thresholds: "1, 3, 10, 30, 50", checkEvery: 1440, time: "16:00", tagCreator: true, graphic: true, handleFallback: true },
+    key: "wins", n: "04", name: "Creator wins",
+    what: "A milestone shoutout the first time a creator hits their 1st, 3rd, 10th, 30th or 50th sale.", hint: ["share-wins", "creator-wins", "wins"],
+    defaults: { mode: "manual", days: WEEKDAYS, time: "16:00", thresholds: "1, 3, 10, 30, 50", graphic: true, voice: "" },
   },
   {
-    key: "leaderboard", n: "05", name: "Weekly leaderboard", skill: "discord-tvc-weekly-leaderboard",
-    what: "Top 5 creators by GMV, every Monday.", hint: ["leaderboard"],
-    defaults: { mode: "manual", days: ["Mon"], time: "17:00", topN: 5, metric: "GMV", tagCreators: true, everyone: true },
+    key: "leaderboard", n: "05", name: "Weekly leaderboard",
+    what: "Top 5 creators by GMV for the last 7 days.", hint: ["leaderboard"],
+    defaults: { mode: "manual", days: ["Mon"], time: "17:00", topN: 5, mention: "@here", voice: "" },
   },
   {
-    key: "onboarding", n: "06", name: "Creator onboarding",
-    what: "DMs new members and links their TikTok.", hint: [],
-    defaults: { mode: "flag", linkFirst: true, reminderHours: 24, maxReminders: 1, fallback: "private-channel" },
+    key: "onboarding", n: "06", name: "Creator onboarding", live: true,
+    what: "DMs each new member your questions, links their TikTok and saves the answers.", hint: ["welcome", "introductions"],
+    defaults: { reminderHours: 24 },
   },
 ];
 export const autoByKey = (k) => AUTOS.find((a) => a.key === k);
 
-export const MODE_LABEL = { auto: "Auto", flag: "Auto with flagging", manual: "Manual approval" };
-export const WIN_PARTS = ["Video post", "Numbers card", "Script card", "How to replicate"];
-
-/** Automations whose skill can build a test draft. */
+/** Automations that build a draft on a schedule (the others react to Discord as it happens). */
 export const BUILDABLE = ["viral_hooks", "winning_content", "wins", "leaderboard"];
-
-export const KPI = [
-  ["total_gmv", "Total GMV", "money", "Entire TikTok Shop GMV."],
-  ["affiliate_gmv", "Affiliate GMV", "money", "GMV from affiliate creators."],
-  ["ads_gmv", "Ads GMV", "money", "Affiliate GMV from orders that ran in shop ads (GMV Max)."],
-  ["organic_gmv", "Organic GMV", "money", "Affiliate GMV that didn’t come through ads."],
-  ["commission", "Commission paid", "money", "Commission earned by creators."],
-  ["daily_active_affiliates", "Creators with sales", "int", "Creators earning any GMV in the range."],
-  ["videos_posted", "Videos posted", "int", "Affiliate videos posted in the range."],
-  ["video_views", "Video views", "int", "Views on affiliate videos."],
-  ["sample_requests", "Sample requests", "int", "Requests submitted in the range."],
-  ["samples_approved", "Samples approved", "int", "Approved in the range, whatever their status today."],
-  ["samples_delivered", "Samples delivered", "int", "Delivered to creators in the range."],
-  ["dms_sent", "Outreach DMs", "int", "All outreach DMs sent."],
-];
 
 export const COMM_TABS = [
   ["overview", "Overview"],
+  ["creators", "Creators"],
   ["leaderboard", "Leaderboard"],
   ["channels", "Channels"],
   ["revenue", "Creators × revenue"],
@@ -85,19 +62,12 @@ export const COMM_TABS = [
   ["scoring", "Scoring settings"],
 ];
 
-export const STATUS = {
-  pending: ["Waiting", ""],
-  working: ["Being built", ""],
-  posting: ["Posting…", ""],
-  posted: ["Posted", "good"],
-  approved: ["Approved", "good"],
-  rejected: ["Rejected", "line"],
-  replaced: ["Regenerated", "line"],
-  failed: ["Failed", "bad"],
-};
-
-export const ACCESS_HELP =
-  "In Discord, open the channel’s settings → Permissions → Add members or roles → your bot, then allow View Channel, Send Messages, Embed Links and Read Message History. Then press Re-sync From Discord in Bot & channels.";
+export const TIMEZONES = [
+  ["America/New_York", "America/New_York (ET)"], ["America/Chicago", "America/Chicago (CT)"], ["America/Denver", "America/Denver (MT)"],
+  ["America/Los_Angeles", "America/Los_Angeles (PT)"], ["Europe/London", "Europe/London (UK)"], ["Europe/Berlin", "Europe/Berlin (CET)"],
+  ["Asia/Dubai", "Asia/Dubai (GST)"], ["Asia/Karachi", "Asia/Karachi (PKT)"], ["Asia/Kolkata", "Asia/Kolkata (IST)"], ["Asia/Singapore", "Asia/Singapore (SGT)"],
+  ["Australia/Sydney", "Australia/Sydney (AET)"],
+];
 
 export function guessChannel(channels, hints) {
   for (const h of hints) {
@@ -111,25 +81,30 @@ export function defaultAutos(channels) {
   const o = {};
   AUTOS.forEach((a) => {
     const channel = guessChannel(channels, a.hint);
-    o[a.key] = { enabled: !!channel, channel, reminderHours: 4, expireHours: 24, ...structuredClone(a.defaults) };
+    o[a.key] = { enabled: !!channel, channel, ...structuredClone(a.defaults) };
   });
   return o;
 }
 
 export function mergeAutos(base, saved) {
   const o = {};
-  Object.keys(base).forEach((k) => (o[k] = { ...base[k], ...(saved[k] || {}) }));
+  Object.keys(base).forEach((k) => {
+    const s = saved[k] || {};
+    // Settings saved before mentions were a choice used an on/off flag.
+    const mention = s.mention ?? (s.everyone === false ? "none" : base[k].mention);
+    o[k] = { ...base[k], ...s, ...(mention ? { mention } : {}) };
+  });
   return o;
 }
 
 export const defaultOb = () => ({
   questions: [
     "What’s your TikTok handle?",
-    "What kind of content do you mostly make?",
-    "Have you sold on TikTok Shop before? Roughly how much?",
-    "What would help you most here: samples, content ideas or commission boosts?",
+    "What kind of content do you usually make?",
+    "How many videos can you post a week?",
+    "What’s the best way for our team to reach you? (WhatsApp or email)",
   ],
-  welcome: "Hey {name}, welcome to the {brand} creator community. Quick hello so we can help you sell more.",
+  welcome: "Hey {first_name}, welcome to {server}! 👋 A few quick questions so we can set you up.",
 });
 
 export const defaultScoring = () => ({
@@ -137,12 +112,33 @@ export const defaultScoring = () => ({
   cooldown: 30,
   excludedChannels: [],
   excludedRoles: [],
-  w: { m: 1, rr: 1, pr: 1.5, ad: 2, rg: 0.5, v: 0.5 },
+  w: { m: 3, rr: 2, pr: 2, ad: 3, rg: 1, v: 1 },
 });
 
+export const defaultPrefs = () => ({
+  timezone: "America/New_York", weekStart: "Sunday",
+  waDetect: true, dmNew: true, reminders: true, notifyDraft: true, notifyDm: true, digest: false,
+});
+
+const FULL_DAY = { Mon: "Monday", Tue: "Tuesday", Wed: "Wednesday", Thu: "Thursday", Fri: "Friday", Sat: "Saturday", Sun: "Sunday" };
+const t12 = (t) => {
+  const [h, m] = String(t || "").split(":").map(Number);
+  if (isNaN(h)) return "";
+  return `${h % 12 || 12}:${String(m || 0).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`;
+};
+/** "Mon–Wed · 2:00 PM", "Daily · 4:00 PM", "Mondays · 5:00 PM". */
+export function daysTimeText(days = [], time) {
+  const d = WEEKDAYS.filter((x) => days.includes(x));
+  if (!d.length || !time) return "Not scheduled";
+  const idx = d.map((x) => WEEKDAYS.indexOf(x));
+  const run = idx.every((v, i) => !i || v === idx[i - 1] + 1);
+  const label = d.length === 7 ? "Daily" : d.length === 1 ? FULL_DAY[d[0]] + "s" : run && d.length > 2 ? `${d[0]}–${d[d.length - 1]}` : d.join(", ");
+  return `${label} · ${t12(time)}`;
+}
+export const timeText = t12;
+
 export function scheduleText(a, s) {
-  if (a.key === "general_chat") return "Every message";
-  if (a.key === "wins") return "Daily " + (s.time || "16:00") + " ET · " + s.thresholds;
-  if (a.key === "onboarding") return "When a member joins";
-  return (s.days || []).join(" · ") + " " + (s.time || "") + " ET" + (s.everyone ? " · @here" : "");
+  if (a.key === "general_chat") return "Always on";
+  if (a.key === "onboarding") return "When someone joins";
+  return daysTimeText(s.days, s.time);
 }

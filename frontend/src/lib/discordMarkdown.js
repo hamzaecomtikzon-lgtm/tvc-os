@@ -11,9 +11,10 @@ export function discordMd(t) {
     .map((line) => {
       const h = esc(line)
         .replace(/\*\*(.+?)\*\*/g, "<b>$1</b>")
-        .replace(/&lt;@!?(\d+)&gt;/g, '<span class="ment">@member</span>')
-        .replace(/`(@here|@everyone)`/g, '<span class="ment">$1</span>')
-        .replace(/(^|\s)(@here|@everyone)(?=\s|$)/g, '$1<span class="ment">$2</span>')
+        .replace(/&lt;@!?(\d+)&gt;/g, '<span class="mention">@member</span>')
+        .replace(/`(@here|@everyone)`/g, '<span class="mention">$1</span>')
+        .replace(/(^|\s)(@here|@everyone)(?=\s|$)/g, '$1<span class="mention">$2</span>')
+        .replace(/(^|\s)(@[a-z0-9._]{2,30})(?=[\s,.!?]|$)/gi, '$1<span class="mention">$2</span>')
         .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
       if (/^# /.test(line)) return `<span class="h1">${h.slice(2)}</span>`;
       if (/^-# /.test(line)) return `<span class="sub">${h.slice(3)}</span>`;

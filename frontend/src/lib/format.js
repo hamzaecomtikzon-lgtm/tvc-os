@@ -59,7 +59,50 @@ export function change(now, prev) {
   return { dir: p >= 0 ? "up" : "down", pct: Math.abs(p) };
 }
 
+const back = (n) => ymd(addDays(todayUTC(), -n));
+const monthStart = (d, shift = 0) => ymd(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + shift, 1)));
+/** Date range presets: `[key, label, () => [from, to]]`. */
+export const PRESETS = [
+  ["today", "Today", () => [back(0), back(0)]],
+  ["yesterday", "Yesterday", () => [back(1), back(1)]],
+  ["7", "Last 7 days", () => [back(6), back(0)]],
+  ["14", "Last 14 days", () => [back(13), back(0)]],
+  ["30", "Last 30 days", () => [back(29), back(0)]],
+  ["week", "Last week (Sun–Sat)", () => { const t = todayUTC(); const s = addDays(t, -t.getUTCDay() - 7); return [ymd(s), ymd(addDays(s, 6))]; }],
+  ["month", "This month", () => [monthStart(todayUTC()), back(0)]],
+  ["lmonth", "Last month", () => [monthStart(todayUTC(), -1), ymd(addDays(monthStart(todayUTC()), -1))]],
+  ["90", "Last 90 days", () => [back(89), back(0)]],
+];
+
 export function presetRange(key) {
-  const end = addDays(todayUTC(), -1);
-  return { key, to: ymd(end), from: ymd(addDays(end, -(parseInt(key, 10) - 1))) };
+  const p = PRESETS.find((x) => x[0] === key) || PRESETS[2];
+  const [from, to] = p[2]();
+  return { key: p[0], from, to };
+}
+
+/** "Last 7 days · Nov 5 – Nov 11, 2026" */
+export function rangeText({ key, from, to }) {
+  const p = PRESETS.find((x) => x[0] === key);
+  return (p ? p[1] + " · " : "") + (from === to ? `${fmtDate(from)}, ${to.slice(0, 4)}` : rangeLabel(from, to));
+}
+
+export const initials = (s) => String(s || "?").replace(/[^a-z0-9 ]/gi, " ").trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase() || "?";
+
+/** "2m ago", "3h ago", "Nov 5". */
+export function ago(iso) {
+  if (!iso) return "";
+  const s = (Date.now() - Date.parse(iso)) / 1000;
+  if (s < 60) return "Just now";
+  if (s < 3600) return Math.floor(s / 60) + "m ago";
+  if (s < 86400) return Math.floor(s / 3600) + "h ago";
+  return fmtDate(iso);
+}
+
+/** Save rows as a CSV file. `rows` is an array of arrays; the first is the header. */
+export function downloadCsv(name, rows) {
+  const cell = (v) => { const t = String(v ?? ""); return /[",\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
+  const url = URL.createObjectURL(new Blob([rows.map((r) => r.map(cell).join(",")).join("\n")], { type: "text/csv" }));
+  const a = Object.assign(document.createElement("a"), { href: url, download: name });
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

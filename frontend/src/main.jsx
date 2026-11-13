@@ -1,22 +1,22 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "./index.css";
+import "./site.css";
+import "./setup.css";
 import App from "./App.jsx";
-import { AppProvider } from "./context/AppContext.jsx";
-import { startWorker } from "./services/worker.js";
-import { seedDemoIfNeeded } from "./services/seed.js";
+import { db } from "./services/db.js";
+import { auth } from "./services/auth.js";
 
-// Open on a ready demo workspace instead of an empty setup guide.
-seedDemoIfNeeded();
+// Each account has its own workspace data. Registered before React subscribes,
+// so the right store is opening by the time the app re-renders for a new session.
+const openStore = () => db.open(auth.user()?.workspace).catch(() => {});
+auth.subscribe(openStore);
 
-// The worker stands in for the Claude session that runs the Discord bot:
-// it picks up requests (sync, allowlist, draft, post, reject) from the store.
-startWorker();
+// Know who is signed in before the first render, so pages don't flash the wrong screen.
+await auth.init();
 
 createRoot(document.getElementById("root")).render(
   <StrictMode>
-    <AppProvider>
-      <App />
-    </AppProvider>
+    <App />
   </StrictMode>,
 );

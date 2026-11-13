@@ -1,123 +1,92 @@
 import { useState } from "react";
 import { useApp } from "../context/app.js";
 import { db } from "../services/db.js";
-import { ACCESS_HELP, STATUS, autoByKey } from "../lib/constants.js";
 import { draftMsgs } from "../lib/discordMarkdown.js";
 import { fmtTime } from "../lib/format.js";
-import { DiscordPreview, Empty, Hero } from "../components/ui.jsx";
-import { useTestDraft } from "../hooks/useTestDraft.js";
+import { Dc, Empty, Ico, PageHead, Tabs } from "../components/ui.jsx";
+
+const TABS = [["pending", "Waiting on you"], ["posted", "Posted"], ["rejected", "Rejected"]];
 
 export default function Approvals() {
-  const { guild, drafts, building } = useApp();
-  const pend = drafts.filter((d) => d.status === "pending" || d.status === "posting");
-  const done = drafts.filter((d) => !["pending", "posting"].includes(d.status));
-
+  const { drafts, building, cfg, chName, view, setView } = useApp();
+  const tab = view.ap || "pending";
+  const n = (s) => drafts.filter((d) => (s === "pending" ? d.status === "pending" || d.status === "posting" : d.status === s)).length;
+  const list = drafts.filter((d) => (tab === "pending" ? d.status === "pending" || d.status === "posting" : d.status === tab));
+  const mod = cfg.modChannel ? "#" + chName(cfg.modChannel) : "";
   return (
     <>
-      <Hero eyebrow={guild ? guild.guildName : "Discord"} title="Approvals" lede="Every draft shows exactly as it will post. Approve, edit, regenerate or reject." />
-      <div className="grid">
-        <section className="card">
-          <div className="head"><h2>Waiting on you</h2><span className="pill">{pend.length}</span></div>
-          {building.map((r) => (
-            <div key={r.id} className="drafting">
-              <span className="ndisc">…</span>
-              <span><b>{autoByKey(r.automation)?.name || "Draft"}</b><span className="muted" style={{ display: "block" }}>Building… · {fmtTime(r.at)}</span></span>
-            </div>
-          ))}
-          {pend.length ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>{pend.map((d) => <DraftCard key={d.id} d={d} />)}</div>
-          ) : !building.length && <Empty title="All caught up">Use Test Post in Automations to see a draft here.</Empty>}
-        </section>
-
-        <section className="card">
-          <div className="head"><h2>Activity log</h2><span className="muted">{done.length} decided</span></div>
-          {done.length ? (
-            <div className="rows">
-              {done.slice(0, 40).map((d) => {
-                const st = STATUS[d.status] || [d.status, ""];
-                return (
-                  <div key={d.id}>
-                    <span className="grow">
-                      <b className="trunc">{d.name}{d.channelName ? " → #" + d.channelName : ""}</b>
-                      <span className="muted">{fmtTime(d.decidedAt || d.createdAt)} · {(d.history || []).slice(-1)[0]?.what || ""}</span>
-                      {d.messageUrl && <a className="posted" href={d.messageUrl} target="_blank" rel="noopener noreferrer">Open in Discord ↗</a>}
-                    </span>
-                    <span className={"pill " + st[1]}>{st[0]}</span>
-                    <button className="btn sm ghost" aria-label="Delete" title="Delete" onClick={() => db.remove("drafts/" + d.id)}>✕</button>
-                  </div>
-                );
-              })}
-            </div>
-          ) : <Empty>Posted, rejected and expired drafts show here.</Empty>}
-        </section>
-      </div>
+      <PageHead title="Approvals" desc={mod ? `Every draft also waits in ${mod}, where a moderator can react ✅ or ❌. Whoever approves first posts it, once.` : "Pick an approvals channel in Settings → Channels to also review drafts in Discord."} />
+      <Tabs value={tab} onChange={(ap) => setView({ ap })} tabs={TABS.map(([k, l]) => [k, l, <span key="n" className={"pill " + (k === "pending" && n(k) ? "rose" : "line")}>{n(k)}</span>])} />
+      {tab === "pending" && building.length > 0 && <div className="hint" style={{ marginBottom: 14 }}><span className="spin" aria-hidden="true" /><div>Building {building.length} draft{building.length === 1 ? "" : "s"}…</div></div>}
+      {list.length ? list.map((d) => <Draft key={d.id} d={d} />) : (
+        <div className="tile"><Empty title={tab === "pending" ? "Nothing waiting" : "Nothing here yet"}>{tab === "pending" ? "New drafts show up here and in your approvals channel. Use Run now on an automation to build one." : ""}</Empty></div>
+      )}
     </>
   );
 }
 
-function DraftCard({ d }) {
-  const { cfg, canPost, chName, request, toast } = useApp();
-  const [, testDraft] = useTestDraft();
-  const [editing, setEditing] = useState(false);
-  const msgs = draftMsgs(d);
-  const [texts, setTexts] = useState(() => msgs.map((m) => m.text));
-  const posting = d.status === "posting";
-  const error = !posting && d.channel && !canPost(d.channel) ? `The bot can’t see #${d.channelName || chName(d.channel)}. ${ACCESS_HELP}` : d.error;
-  const now = () => new Date().toISOString();
-  const path = "drafts/" + d.id;
-  const hist = (what) => [...(d.history || []), { at: now(), what }];
+function Draft({ d }) {
+  const { requestWait, toast, canEdit } = useApp();
+  const [msgs, setMsgs] = useState(() => draftMsgs(d));
+  const [busy, setBusy] = useState("");
+  const pending = d.status === "pending";
+  const dirty = JSON.stringify(msgs.map((m) => m.text)) !== JSON.stringify(draftMsgs(d).map((m) => m.text));
 
-  const saveEdit = async () => {
-    const next = msgs.map((m, i) => ({ ...m, text: (texts[i] ?? m.text).slice(0, 2000) }));
-    await db.update(path, { messages: next, text: next.map((m) => m.text).join("\n\n").slice(0, 4000), history: hist("Edited") });
-    setEditing(false);
-    toast("Edit saved");
+  const save = async () => {
+    if (!dirty) return true;
+    const { id, ...doc } = d;
+    try {
+      await db.set("drafts/" + id, { ...doc, messages: msgs, text: msgs.map((m) => m.text).join("\n\n") });
+      return true;
+    } catch (e) {
+      toast("Couldn’t save your edit. " + e.message);
+      return false;
+    }
   };
-  const regen = async () => {
-    await db.update(path, { status: "replaced", decidedAt: now(), history: hist("Regenerated") });
-    testDraft(d.automation, d.id);
+  const run = async (type, okText) => {
+    setBusy(type);
+    const r = (await save()) && (await requestWait(type, { draftId: d.id }));
+    setBusy("");
+    if (!r) return;
+    if (!r.ok) return toast(r.error || "That didn’t work. Try again.");
+    if (type === "post" && r.result.posted === false) return toast(r.result.error || "Couldn’t post it.");
+    toast(okText);
   };
-  const reject = async () => {
-    await db.update(path, { status: "rejected", decidedAt: now(), history: hist("Rejected in Creator OS") });
-    if (d.source === "schedule") request("reject", { draftId: d.id });
-    toast("Rejected");
-  };
-  const post = async () => {
-    await db.update(path, { status: "posting", error: null, decidedAt: now(), history: hist("Approved, sending to Discord") });
-    const sent = await request("post", { draftId: d.id, channel: d.channel });
-    if (!sent) await db.update(path, { status: "pending", error: "Couldn’t reach Claude to post. Try again, or ask Claude to post queued drafts." });
-  };
-
-  const preview = editing ? texts.map((t, i) => ({ ...msgs[i], text: t })) : msgs;
+  const where = d.channel === "dm" ? "a DM to each creator" : d.channelName ? "#" + d.channelName : "no channel";
 
   return (
-    <article className="draft">
-      <div className="draft-head">
-        <b>{d.name}{d.channelName ? " → #" + d.channelName : ""}</b>
-        <span className="muted">{d.test ? "Test · " : ""}{fmtTime(d.createdAt)}</span>
+    <article className="appr">
+      <div style={{ minWidth: 0 }}>
+        <span className="pill">{d.name}</span>
+        <h3>{d.name} · {fmtTime(d.createdAt)}</h3>
+        <p className="muted" style={{ fontSize: "var(--text-small)" }}>Posts to <b style={{ color: "var(--color-heading)", fontWeight: 500 }}>{where}</b> · {d.source === "schedule" ? "built on schedule" : "built by hand"}</p>
+        {d.error && <p className="err" style={{ marginTop: 8 }}>{d.error}</p>}
+        {pending ? (
+          <>
+            {msgs.map((m, i) => (
+              <label key={i} className="field" style={{ marginTop: 14 }}>{msgs.length > 1 ? `Message ${i + 1} of ${msgs.length}` : "Message"}
+                <textarea className="input" value={m.text} disabled={!canEdit} onChange={(e) => setMsgs(msgs.map((x, j) => (j === i ? { ...x, text: e.target.value } : x)))} onBlur={save} />
+              </label>
+            ))}
+            <div className="acts">
+              <button className="btn primary" type="button" disabled={!canEdit || !!busy || !d.channel} onClick={() => run("post", `Posted to ${where}`)}><Ico name="check" />{busy === "post" ? "Posting…" : "Approve & post"}</button>
+              <button className="btn" type="button" disabled={!canEdit || !!busy} onClick={() => run("test", "Test sent to your approvals channel")}>{busy === "test" ? "Sending…" : "Send test to mods"}</button>
+              <button className="btn ghost" type="button" disabled={!canEdit || !!busy} onClick={() => run("reject", "Rejected")}>Reject</button>
+            </div>
+          </>
+        ) : (
+          <div className="meta">
+            {d.status === "posting" ? <span className="pill">Posting…</span> : <span className={"pill " + (d.status === "posted" ? "good" : "line")}>{d.status === "posted" ? "Posted" : "Rejected"} by {d.by || "You"}</span>}
+            {d.status === "posted" && d.channel !== "dm" && <span className="pill line">🔥 🤍 🚀 📈 added</span>}
+            {d.messageUrl && <a className="pill line" href={d.messageUrl} target="_blank" rel="noopener noreferrer">Open in Discord <Ico name="external" /></a>}
+          </div>
+        )}
       </div>
-      <DiscordPreview botName={cfg.botName} messages={preview} />
-      {d.test ? <span className="muted">Test · posts to #{d.channelName || "moderator-only"}</span> : d.source === "schedule" ? <span className="muted">Also in #moderator-only</span> : null}
-
-      {editing && msgs.map((m, i) => (
-        <div key={i} className="field">
-          <label htmlFor={`ed-${d.id}-${i}`} className="muted">Message {i + 1} of {msgs.length}</label>
-          <textarea id={`ed-${d.id}-${i}`} rows={6} maxLength={2000} value={texts[i]} onChange={(e) => setTexts(texts.map((t, j) => (j === i ? e.target.value : t)))} />
-        </div>
-      ))}
-
-      {posting ? <span className="pill">Posting… Claude is sending it to Discord</span> : (
-        <div className="row-actions" style={{ gap: 6 }}>
-          <button className="btn sm primary" disabled={!d.channel || editing} onClick={post}>Approve &amp; Post</button>
-          {editing ? <>
-            <button className="btn sm" onClick={saveEdit}>Save Edit</button>
-            <button className="btn sm ghost" onClick={() => { setTexts(msgs.map((m) => m.text)); setEditing(false); }}>Cancel</button>
-          </> : <button className="btn sm" onClick={() => setEditing(true)}>Edit</button>}
-          {d.source !== "schedule" && !editing && <button className="btn sm" onClick={regen}>Regenerate</button>}
-          {!editing && <button className="btn sm ghost" onClick={reject}>Reject</button>}
-        </div>
-      )}
-      {error && <span className="pill bad">{error}</span>}
+      <div style={{ minWidth: 0 }}>
+        <div className="sec-t">Preview</div>
+        <Dc channel={d.channelName} dm={d.channel === "dm"} messages={msgs} time={d.status === "posted" ? fmtTime(d.postedAt) : "Waiting"} />
+        {msgs.some((m) => m.images?.length) && <p className="muted" style={{ fontSize: "var(--text-micro)", marginTop: 6 }}>The card is a preview. Discord gets the text; the image isn’t uploaded yet.</p>}
+      </div>
     </article>
   );
 }

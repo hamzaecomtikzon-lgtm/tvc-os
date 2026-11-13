@@ -1,70 +1,77 @@
 /*
- * A small document store with Firestore-like paths ("collection/docId"),
- * persisted to localStorage and shared live across browser tabs.
- * Swap this module for a real backend client to go to production; the UI only
- * uses get / list / set / update / remove / add / setMany and useDb().
+ * The account's document store, with Firestore-like paths ("collection/docId").
+ * Documents live on the server; this module keeps a live copy in memory so the
+ * UI can read synchronously, sends writes to the API, and applies changes pushed
+ * by the server (other tabs, and the bot's work) as they happen.
  */
 import { useSyncExternalStore } from "react";
-
-const PREFIX = "tvc-creator-os.v2.";
-// Large, write-rarely collections live in their own bucket so ordinary saves stay cheap.
-const bucketOf = (path) => (path.startsWith("activity/") ? "activity" : "main");
+import { CLIENT_ID, api } from "./api.js";
 
 let data = {};
 let version = 0;
-const dirty = new Set();
+let account = ""; // id of the signed-in user whose documents are loaded
+let ready = Promise.resolve();
+let stream = null;
+let writes = Promise.resolve(); // writes go out one at a time, in order
 const listeners = new Set();
-
-function load() {
-  data = {};
-  for (const b of ["main", "activity"]) {
-    try {
-      Object.assign(data, JSON.parse(localStorage.getItem(PREFIX + b) || "{}"));
-    } catch {
-      /* corrupt or unavailable storage: start empty */
-    }
-  }
-}
-load();
 
 function emit() {
   version++;
   listeners.forEach((l) => l());
 }
 
-function commit() {
-  let failure = null;
-  for (const b of dirty) {
-    const slice = {};
-    for (const [k, v] of Object.entries(data)) if (bucketOf(k) === b) slice[k] = v;
-    try {
-      localStorage.setItem(PREFIX + b, JSON.stringify(slice));
-    } catch {
-      failure = Object.assign(new Error("Storage is full"), { code: "quota_exceeded" });
-    }
-  }
-  dirty.clear();
+async function load(id) {
+  const { docs } = await api("GET", "/docs");
+  if (id !== account) return;
+  data = docs;
   emit();
-  if (failure) throw failure;
 }
 
-function touch(path) {
-  dirty.add(bucketOf(path));
+function listen(id) {
+  stream = new EventSource("/api/events?cid=" + CLIENT_ID);
+  let dropped = false;
+  stream.onmessage = (e) => {
+    const { path, doc } = JSON.parse(e.data);
+    if (path == null) data = {};
+    else if (doc == null) delete data[path];
+    else data[path] = doc;
+    emit();
+  };
+  // After a dropped connection, changes may have been missed: read everything again.
+  stream.onerror = () => { dropped = true; };
+  stream.onopen = () => {
+    if (dropped) load(id).catch(() => {});
+    dropped = false;
+  };
 }
 
-if (typeof window !== "undefined") {
-  window.addEventListener("storage", (e) => {
-    if (e.key && e.key.startsWith(PREFIX)) {
-      load();
-      emit();
-    }
-  });
+/** Send a write after the ones before it. Rejects if the server refuses it. */
+function push(method, path, body) {
+  const run = writes.then(() => api(method, path, body));
+  writes = run.catch(() => {});
+  return run;
 }
 
 const isChild = (path, col) => path.startsWith(col + "/") && !path.slice(col.length + 1).includes("/");
-const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+const url = (path) => "/docs/" + path.split("/").map(encodeURIComponent).join("/");
 
 export const db = {
+  /** Load one account's documents and keep them live (or close the store when `id` is empty). */
+  open(id = "") {
+    if (id === account) return ready;
+    account = id;
+    stream?.close();
+    stream = null;
+    data = {};
+    emit();
+    if (!id) return (ready = Promise.resolve());
+    listen(id);
+    return (ready = load(id));
+  },
+  /** Resolves when the open account's documents have loaded. Rejects if they couldn't be. */
+  ready: () => ready,
+  /** Resolves when every write made so far has reached the server. */
+  flushed: () => writes,
   /** Read one document (a copy) or null. */
   get(path) {
     return data[path] ? structuredClone(data[path]) : null;
@@ -79,44 +86,28 @@ export const db = {
   },
   async set(path, doc) {
     data[path] = structuredClone(doc);
-    touch(path);
-    commit();
+    emit();
+    await push("PUT", url(path), { doc });
   },
   async update(path, patch) {
     if (!data[path]) throw Object.assign(new Error("Document not found"), { code: "not_found" });
-    data[path] = { ...data[path], ...structuredClone(patch) };
-    touch(path);
-    commit();
+    await db.set(path, { ...data[path], ...patch });
   },
   async remove(path) {
     delete data[path];
-    touch(path);
-    commit();
-  },
-  async add(col, doc) {
-    const id = newId();
-    data[col + "/" + id] = structuredClone(doc);
-    touch(col + "/" + id);
-    commit();
-    return id;
-  },
-  async setMany(entries) {
-    for (const { path, data: d } of entries) {
-      data[path] = d;
-      touch(path);
-    }
-    commit();
+    emit();
+    await push("DELETE", url(path));
   },
   count(col) {
     let n = 0;
     for (const k in data) if (isChild(k, col)) n++;
     return n;
   },
-  reset() {
+  /** Delete every document of the account. */
+  async reset() {
     data = {};
-    dirty.add("main");
-    dirty.add("activity");
-    commit();
+    emit();
+    await push("DELETE", "/docs");
   },
   subscribe(fn) {
     listeners.add(fn);

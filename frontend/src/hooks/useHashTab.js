@@ -7,10 +7,17 @@ const subscribe = (fn) => {
 };
 const read = () => {
   const h = location.hash.replace("#", "");
-  return TABS[h] ? h : "overview";
+  return TABS[h] ? h : "dashboard";
 };
 
-/** Current tab from the URL hash (#overview, #automations, …). */
+const readRaw = () => location.hash.replace("#", "");
+
+/** The raw URL hash without the "#" ("" when there is none). */
+export function useHash() {
+  return useSyncExternalStore(subscribe, readRaw);
+}
+
+/** Current tab from the URL hash (#dashboard, #automations, …). */
 export function useHashTab() {
   return useSyncExternalStore(subscribe, read);
 }
