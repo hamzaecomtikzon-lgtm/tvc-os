@@ -1,0 +1,9 @@
+{
+
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://tvc-os-production.up.railway.app/api/:path*"
+    }
+  ]
+}
