@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useApp } from "../context/app.js";
+import { api } from "../services/api.js";
 import { MENTIONS, WEEKDAYS, daysTimeText } from "../lib/constants.js";
 import { baseName } from "../lib/setup.js";
 import { ChanSelect, Dc, Dialog, Ico, PageHead, Sw } from "../components/ui.jsx";
@@ -65,7 +66,8 @@ function assist(text, spec, channels) {
 }
 
 export default function Builder() {
-  const { customs, autos, view, setView, go, chName, cfg, channels, saveCustom, toast, crmName } = useApp();
+  const { customs, autos, view, setView, go, chName, cfg, channels, saveCustom, toast, crmName, gid } = useApp();
+  const [cfgAi, setCfgAi] = useState(null);
   const editing = customs.find((c) => c.id === view.cb) || null;
   const [spec, setSpec] = useState(() => (editing ? { ...fresh(""), ...editing } : fresh(autos.general_chat.channel || channels[0]?.id || "")));
   const [chat, setChat] = useState(() => editing?.chat || [["ai", HELLO]]);
@@ -78,19 +80,31 @@ export default function Builder() {
 
   useEffect(() => { if (box.current) box.current.scrollTop = box.current.scrollHeight; }, [chat, typing]);
 
-  const send = (text) => {
+  const send = async (text) => {
     text = text.trim();
     if (!text || typing) return;
     setChat((c) => [...c, ["me", text]]);
     setInput("");
     setTyping(true);
-    setTimeout(() => {
-      const out = assist(text, spec, channels);
-      setSpec(out.spec);
-      setChat((c) => [...c, ["ai", out.reply]]);
-      setFlash(out.changed);
-      setTyping(false);
-    }, 500);
+    let out;
+    if (cfgAi !== false) {
+      try {
+        const r = await api("POST", "/ai/automation", { gid, spec, chat, message: text, channels: channels.map((c) => ({ id: c.id, name: baseName(c.name) })) });
+        const next = { ...spec, ...r.spec };
+        const changed = ["name", "what", "text", "channel", "mention", "approval"].filter((k) => JSON.stringify(next[k]) !== JSON.stringify(spec[k]));
+        if (JSON.stringify(next.days) !== JSON.stringify(spec.days) || next.time !== spec.time) changed.push("schedule");
+        out = { spec: next, reply: r.reply, changed };
+      } catch (e) {
+        // No AI on the server: use the built-in helper from now on. Other errors fall back for this message only.
+        if (e.code === "ai_off") setCfgAi(false);
+        if (e.code === "ai_declined") out = { spec, reply: e.message, changed: [] };
+      }
+    }
+    out ||= assist(text, spec, channels);
+    setSpec(out.spec);
+    setChat((c) => [...c, ["ai", out.reply]]);
+    setFlash(out.changed);
+    setTyping(false);
   };
   const store = async (on, patch = {}) => {
     const id = editing?.id || view.cb || "cu" + Date.now().toString(36);
@@ -111,7 +125,7 @@ export default function Builder() {
       </PageHead>
       <div className="cab">
         <section className="chatbox" aria-label="Chat with the builder">
-          <div className="ch-h"><span className="todo-i"><Ico name="spark" /></span><div><b>Kreo builder</b><div className="muted" style={{ fontSize: "var(--text-micro)" }}>Understands days, times, channels, mentions and tone</div></div></div>
+          <div className="ch-h"><span className="todo-i"><Ico name="spark" /></span><div><b>Kreo builder</b><div className="muted" style={{ fontSize: "var(--text-micro)" }}>{cfgAi === false ? "Understands days, times, channels, mentions and tone" : "Powered by Claude: describe it any way you like"}</div></div></div>
           <div className="msgs" ref={box}>
             {chat.map(([who, t], i) => <div key={i} className={"bub " + (who === "ai" ? "ai" : "me")}>{t.split(/\*\*(.+?)\*\*/g).map((part, j) => (j % 2 ? <b key={j}>{part}</b> : part))}</div>)}
             {typing && <div className="bub ai"><span className="typing"><i /><i /><i /></span></div>}

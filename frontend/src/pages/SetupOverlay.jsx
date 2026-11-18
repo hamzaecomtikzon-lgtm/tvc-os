@@ -419,6 +419,7 @@ function StepChannels({ ctx }) {
 /* ---------- Step 3: CRM and launch ---------- */
 function StepCrm({ ctx }) {
   const { ws, guild, channels, shops, bot, botName, map, crm, saveWs, setShop, toast, goStep, commitChannels } = ctx;
+  const app = ctx; // crmLive / crmName
   const c = CRMS.find((x) => x.id === crm.id);
   const [key, setKey] = useState("");
   const [show, setShow] = useState(false);
@@ -498,7 +499,7 @@ function StepCrm({ ctx }) {
             <button className="k-btn" type="button" onClick={() => setShow((s) => !s)} aria-label={show ? "Hide key" : "Show key"} aria-pressed={show}><Icon name={show ? "eyeOff" : "eye"} /></button>
             <button className="k-btn primary" type="button" onClick={connect} disabled={checking >= 0}><Icon name="plug" />Connect</button>
           </div>
-          <p className="k-micro">{BRAND} only reads data. It never changes anything in {c.name}. Live {c.name} sync isn’t connected yet: your key isn’t stored, and the dashboard shows sample data for now.</p>
+          <p className="k-micro">{BRAND} only reads data. It never changes anything in {c.name}. {app.crmLive ? `${app.crmName} is already connected on the server, so you can skip the key: the dashboard shows your live data.` : `Live ${c.name} sync isn’t connected yet: your key isn’t stored, and the dashboard shows sample data for now.`}</p>
           {checking >= 0 && (
             <div className="k-checks">
               {CRM_CHECKS.map((label, i) => (
@@ -513,15 +514,15 @@ function StepCrm({ ctx }) {
         <>
           <div className="k-connected">
             <Icon name="check" />
-            <div><b>{c.name} selected.</b> Until live sync is connected, {BRAND} shows sample creators and sales.</div>
+            <div><b>{c.name} selected.</b> {app.crmLive ? `Live data from ${app.crmName}.` : `Until live sync is connected, ${BRAND} shows sample creators and sales.`}</div>
             <button className="k-btn sm" type="button" style={{ marginLeft: "auto" }} onClick={change}>Change</button>
           </div>
-          <div className="k-found">
+          {!app.crmLive && <><div className="k-found">
             <div><b>1,284</b><span>Creators in your CRM</span></div>
             <div><b>458</b><span>Linked to Discord</span></div>
             <div><b>$96.4k</b><span>GMV, last 30 days</span></div>
           </div>
-          <p className="k-micro" style={{ marginTop: 8 }}>Sample data. Creators show as their @handle in posts.</p>
+          <p className="k-micro" style={{ marginTop: 8 }}>Sample data. Creators show as their @handle in posts.</p></>}
           <div className="k-summary">
             <div><Icon name="check" /><div><b>Bot</b><span>{botName}{bot.avatar ? "" : " · no picture yet"}</span></div><button className="k-btn sm ghost" type="button" onClick={() => goStep(1)}>Edit</button></div>
             <div><Icon name="check" /><div><b>Server</b><span>{guild.guildName} · {channels.length} channels{created ? `, ${created} created by ${BRAND}` : ""}</span></div><button className="k-btn sm ghost" type="button" onClick={() => goStep(1)}>Edit</button></div>

@@ -14,8 +14,8 @@ import { createServer } from "node:http";
 import { auth } from "./auth.js";
 import { store } from "./store.js";
 import { discord } from "./discord.js";
-import { crm } from "./crm.js";
-import { claimedByOther, startJob, startScheduler } from "./jobs.js";
+import { crmFor, crmSource } from "./crm.js";
+import { cfgOf, claimedByOther, startJob, startScheduler } from "./jobs.js";
 import { gateway } from "./gateway.js";
 import { onEvent } from "./bot.js";
 import { ai } from "./ai.js";
@@ -119,7 +119,28 @@ async function route(req, res) {
   const admin = user.role === "Owner" || user.role === "Admin";
   const needAdmin = () => { if (!admin) throw fail(403, "Your role can’t change this. Ask the workspace owner.", "forbidden"); };
 
-  if (p === "/api/config" && m === "GET") return send(res, 200, { discord: await discord.info(), gateway: gateway.status, ai: ai.configured() });
+  if (p === "/api/config" && m === "GET") return send(res, 200, { discord: await discord.info(), gateway: gateway.status, ai: ai.configured(), crm: crmSource(ns) });
+
+  if (p === "/api/ai/automation" && m === "POST") {
+    if (!ai.configured()) throw fail(503, "The AI builder isn’t set up on the server.", "ai_off");
+    const { gid, spec, chat, message, channels } = await readJson(req);
+    if (typeof message !== "string" || !message.trim() || !spec || typeof spec !== "object") throw fail(400, "Send a message and the current automation.");
+    const cfg = gid ? cfgOf(ns, String(gid)) : {};
+    const owner = store.owner(ns);
+    try {
+      const out = await ai.buildAutomation({
+        brand: owner?.brand || "the brand", botName: cfg.botName || "the bot", voice: cfg.tone || "",
+        channels: (Array.isArray(channels) ? channels : []).slice(0, 200).map((c) => ({ id: String(c.id), name: String(c.name).slice(0, 100) })),
+        spec, chat: Array.isArray(chat) ? chat.filter((x) => Array.isArray(x) && typeof x[1] === "string") : [], message: message.slice(0, 2000),
+      });
+      if (!out) throw fail(422, "The builder couldn’t help with that one. Try describing it differently.", "ai_declined");
+      return send(res, 200, out);
+    } catch (e) {
+      if (e.status && e.code) throw e;
+      console.error("[ai builder]", e);
+      throw fail(502, "The AI builder didn’t answer. Try again in a moment.", "ai_error");
+    }
+  }
 
   if (p === "/api/account" && m === "PUT") return send(res, 200, { user: auth.update(user, await readJson(req)) });
   if (p === "/api/team" && m === "GET") return send(res, 200, auth.team(ns));
@@ -179,8 +200,9 @@ async function route(req, res) {
 
   if (p.startsWith("/api/crm/") && m === "POST") {
     const tool = p.slice("/api/crm/".length);
-    if (!Object.hasOwn(crm, tool)) throw fail(404, "Unknown CRM call.");
-    return send(res, 200, { data: crm[tool](await readJson(req)) });
+    const tools = crmFor(ns);
+    if (!Object.hasOwn(tools, tool)) throw fail(404, "Unknown CRM call.");
+    return send(res, 200, { data: await tools[tool](await readJson(req)) });
   }
 
   throw fail(404, "Not found.", "not_found");

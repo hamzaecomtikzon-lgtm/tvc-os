@@ -6,7 +6,7 @@ import { fmtDate, int } from "../lib/format.js";
 import { DateRange, Empty, PageHead, Skel } from "../components/ui.jsx";
 
 export default function Content() {
-  const { shop, range, money, request, toast, openCreator, autos, setView, canEdit, crmName } = useApp();
+  const { shop, range, money, request, toast, openCreator, autos, setView, canEdit, crmName, crmLive } = useApp();
   const { data, loading, error } = useCruva("searchVideos", { shop_id: shop?.id, date_from: range.from, date_to: range.to, sort_by: "gmv", page_size: 25 }, !!shop);
   const { rows } = useCreators();
   const [busy, setBusy] = useState("");
@@ -23,7 +23,7 @@ export default function Content() {
 
   return (
     <>
-      <PageHead title="Content" desc={`Top videos with your products in this range, from ${crmName} (sample data).`}><DateRange /></PageHead>
+      <PageHead title="Content" desc={`Top videos with your products in this range, from ${crmName}${crmLive ? "" : " (sample data)"}.`}><DateRange /></PageHead>
       {loading ? <div className="tile"><Skel n={8} /></div> : error ? <div className="tile"><Empty title="Couldn’t load videos">{error.message}</Empty></div> : (
         <div className="tblwrap"><table className="tbl">
           <thead><tr><th>#</th><th>Video</th><th>Creator</th><th>Posted</th><th className="r">Views</th><th className="r">GMV</th><th /></tr></thead>

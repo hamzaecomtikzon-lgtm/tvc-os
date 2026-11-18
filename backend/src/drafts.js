@@ -1,5 +1,4 @@
 /* Builds the Discord messages for each automation from CRM data. */
-import { MEMBERS, lifeFraction, videoPool } from "./sampleData.js";
 import { addDays, todayUTC, ymd } from "./dates.js";
 
 export const AUTO_NAMES = {
@@ -9,17 +8,23 @@ export const AUTO_NAMES = {
   leaderboard: "Weekly leaderboard",
 };
 
-function topVideos(shop, days, n) {
-  const to = ymd(addDays(todayUTC(), -1));
-  const from = ymd(addDays(todayUTC(), -days));
-  const sym = shop.region === "uk" ? "£" : "$";
-  return videoPool(shop.id)
-    .map((v) => ({ ...v, f: lifeFraction(v.post_date, from, to) }))
-    .filter((v) => v.f > 0)
-    .map((v) => ({ ...v, gmv: v.base.gmv * v.f, views: v.base.views * v.f }))
-    .sort((a, b) => b.gmv - a.gmv)
-    .slice(0, n)
-    .map((v) => ({ ...v, money: sym + Math.round(v.gmv).toLocaleString("en-US") }));
+const sym = (shop) => (shop.region === "uk" ? "£" : "$");
+const range = (days) => ({ date_from: ymd(addDays(todayUTC(), -days)), date_to: ymd(addDays(todayUTC(), -1)) });
+
+/** The shop's best videos by GMV over the last `days` days, from the CRM. */
+async function topVideos(crm, shop, days, n) {
+  const { videos } = await crm.searchVideos({ shop_id: shop.id, ...range(days), sort_by: "gmv", page_size: Math.min(n, 100) });
+  return videos.filter((v) => v.gmv > 0).slice(0, n).map((v) => ({
+    ...v,
+    money: sym(shop) + Math.round(v.gmv).toLocaleString("en-US"),
+    hook: v.hooks[0]?.hook || v.title || "this video",
+    why: (v.hooks[0]?.explanation || "it opens on the problem and shows the product working within seconds.").replace(/\.?$/, "."),
+  }));
+}
+
+/** Creators by GMV over the last `days` days, from the CRM. */
+async function topCreators(crm, shop, days) {
+  return (await crm.listCreators({ shop_id: shop.id, ...range(days) })).filter((c) => c.gmv > 0);
 }
 
 // Creators are tagged in Discord only once onboarding has linked their TikTok to a
@@ -29,12 +34,6 @@ const tag = (handle) => "@" + handle;
 const ping = (s) => (s.mention === "none" || s.everyone === false ? "" : s.mention === "@everyone" ? "@everyone" : "@here");
 const k = (v) => (v >= 1000 ? (v / 1000).toFixed(v >= 10000 ? 0 : 1) + "k" : String(Math.round(v)));
 
-function ordinal(n) {
-  const s = ["th", "st", "nd", "rd"];
-  const v = n % 100;
-  return n + (s[(v - 20) % 10] || s[v] || s[0]);
-}
-
 /** Preview card shown in Approvals. Discord gets the text; the card isn't uploaded yet. */
 function milestoneCard(n, handle) {
   const label = n === 1 ? "SALE" : "SALES";
@@ -42,20 +41,21 @@ function milestoneCard(n, handle) {
   return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
 }
 
-/** `BUILD[automation](shop, settings)` → `[{ text, images? }]`, one entry per Discord message. */
+/** `await BUILD[automation](shop, settings, { crm })` → `[{ text, images? }]`, one entry per Discord message. `crm` is the workspace's tools from crmFor(). */
 export const BUILD = {
-  viral_hooks(shop, s) {
+  async viral_hooks(shop, s, { crm }) {
     const days = s.lookback || 7;
-    const vids = topVideos(shop, days, 3);
+    const vids = await topVideos(crm, shop, days, 3);
+    if (!vids.length) return [{ text: `no videos with sales in the last ${days} days yet. we’ll be back next time 💪` }];
     return [{
       text: [
         "# 🔥 viral hooks of the week",
-        `-# top 3 videos in the market · last ${days} days`,
+        `-# top ${vids.length} videos by GMV · last ${days} days`,
         "",
         ...vids.flatMap((v, i) => [
-          `**${i + 1}. “${v.hooks[0].hook}”** by @${v.handle}`,
+          `**${i + 1}. “${v.hook}”** by @${v.handle}`,
           `${k(v.views)} views · ${v.money} GMV`,
-          `how to remake it: ${v.hooks[0].explanation.toLowerCase()} open the same way, swap in your own product shot in the first 2 seconds.`,
+          `why it works: ${v.why} open the same way, swap in your own product shot in the first 2 seconds.`,
           v.video_link,
           "",
         ]),
@@ -64,45 +64,47 @@ export const BUILD = {
     }];
   },
 
-  winning_content(shop, s, { videoId } = {}) {
-    const [v] = videoId ? topVideos(shop, 120, 500).filter((x) => x.video_id === videoId) : topVideos(shop, 7, 1);
+  async winning_content(shop, s, { videoId, crm }) {
+    const [v] = videoId ? (await topVideos(crm, shop, 120, 100)).filter((x) => x.video_id === videoId) : await topVideos(crm, shop, 7, 1);
     if (!v) return [{ text: "no winning video last week. we’ll be back next monday 💪" }];
     const parts = s.parts || ["Video post", "Numbers card", "Script card", "How to replicate"];
     const msgs = [];
     if (parts.includes("Video post"))
       msgs.push({ text: `# 🏆 winning angle of the week\n-# last week’s #1 video by GMV\n\nhuge shoutout to ${tag(v.handle)} for this one YAYYY\n${v.video_link}${ping(s) ? "\n\n" + ping(s) : ""}` });
     if (parts.includes("Numbers card"))
-      msgs.push({ text: `**the numbers**\n💰 ${v.money} GMV\n👀 ${k(v.views)} views\n🛒 ${Math.round(v.gmv / v.base.price)} units sold` });
+      msgs.push({ text: `**the numbers**\n💰 ${v.money} GMV\n👀 ${k(v.views)} views\n🛒 ${v.units_sold} units sold` });
     if (parts.includes("Script card"))
-      msgs.push({ text: `**the script**\nhook: “${v.hooks[0].hook}”\nmiddle: show the product in hand, one honest result, one texture shot\nclose: “link’s in the orange cart, grab it before the sale ends”` });
+      msgs.push({ text: `**the script**\nhook: “${v.hook}”\nmiddle: show the product in hand, one honest result, one texture shot\nclose: “link’s in the orange cart, grab it before the sale ends”` });
     if (parts.includes("How to replicate"))
-      msgs.push({ text: `**how to replicate**\n1. film the hook in one take, face to camera\n2. ${v.hooks[0].explanation.toLowerCase()}\n3. keep it under 25 seconds\n4. pin the shop link in the first comment\nlessgoooo 🚀` });
+      msgs.push({ text: `**how to replicate**\n1. film the hook in one take, face to camera\n2. why it works: ${v.why}\n3. keep it under 25 seconds\n4. pin the shop link in the first comment\nlessgoooo 🚀` });
     return msgs.length ? msgs : [{ text: "nothing selected to include. turn on at least one part in settings." }];
   },
 
-  wins(shop, s) {
-    const levels = String(s.thresholds || "1, 3, 10, 30, 50").split(",").map((x) => parseInt(x, 10)).filter(Boolean);
-    return MEMBERS.filter((m) => m.linked).slice(4, 7).map((m, i) => {
-      const n = levels[Math.min(i + 1, levels.length - 1)] || 1;
-      return {
-        text: `YAYYY ${tag(m.tiktok)} just hit their **${ordinal(n)} sale** on TikTok Shop 🎉 lessgoooo`,
-        images: s.graphic === false ? [] : [milestoneCard(n, m.tiktok)],
-      };
-    });
+  async wins(shop, s, { crm }) {
+    const levels = String(s.thresholds || "1, 3, 10, 30, 50").split(",").map((x) => parseInt(x, 10)).filter(Boolean).sort((a, b) => a - b);
+    // Creators whose sales this week reached a milestone, biggest first.
+    const hits = (await topCreators(crm, shop, 7))
+      .map((c) => ({ c, n: levels.filter((l) => l <= c.sales).pop() }))
+      .filter((x) => x.n)
+      .sort((a, b) => b.n - a.n || b.c.sales - a.c.sales)
+      .slice(0, 3);
+    if (!hits.length) return [{ text: "no new milestones this week. next week’s yours 💪" }];
+    return hits.map(({ c, n }) => ({
+      text: `YAYYY ${tag(c.handle)} hit **${n}+ ${n === 1 ? "sale" : "sales"}** on TikTok Shop this week 🎉 lessgoooo`,
+      images: s.graphic === false ? [] : [milestoneCard(n, c.handle)],
+    }));
   },
 
-  leaderboard(shop, s) {
-    const by = {};
-    topVideos(shop, 7, 60).forEach((v) => (by[v.handle] = (by[v.handle] || 0) + v.gmv));
-    const sym = shop.region === "uk" ? "£" : "$";
-    const top = Object.entries(by).sort((a, b) => b[1] - a[1]).slice(0, s.topN || 5);
+  async leaderboard(shop, s, { crm }) {
+    const top = (await topCreators(crm, shop, 7)).slice(0, s.topN || 5).map((c) => [c.handle, c.gmv]);
+    if (!top.length) return [{ text: "no creator sales in the last 7 days yet. the leaderboard is wide open 👀" }];
     const medals = ["🥇", "🥈", "🥉", "4.", "5.", "6.", "7.", "8.", "9.", "10."];
     return [{
       text: [
         "# 🏆 weekly leaderboard",
-        `-# top ${top.length} creators by ${s.metric || "GMV"} · last 7 days`,
+        `-# top ${top.length} creators by GMV · last 7 days`,
         "",
-        ...top.map(([h, g], i) => `${medals[i]} ${tag(h)} · **${sym}${Math.round(g).toLocaleString("en-US")}**`),
+        ...top.map(([h, g], i) => `${medals[i]} ${tag(h)} · **${sym(shop)}${Math.round(g).toLocaleString("en-US")}**`),
         "",
         (ping(s) + " who’s taking the top spot next week? 👀").trim(),
       ].join("\n"),

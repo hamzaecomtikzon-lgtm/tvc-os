@@ -22,7 +22,7 @@ function comingUp(autos, customs) {
 }
 
 export default function Dashboard() {
-  const { user, guild, shop, range, money, autos, customs, drafts, dms, botAvatar, crmName, chName, saveAutos, saveCustom, go, openCreator, toast, canEdit } = useApp();
+  const { user, guild, shop, range, money, autos, customs, drafts, dms, botAvatar, crmName, crmLive, chName, saveAutos, saveCustom, go, openCreator, toast, canEdit } = useApp();
   const stats = useCruva("getShopStats", { shop_id: shop?.id, date_from: range.from, date_to: range.to, stats: STATS, include_charts: true }, !!shop);
   const { rows } = useCreators();
   const { M, members, tracking } = useCommunity();
@@ -51,7 +51,7 @@ export default function Dashboard() {
 
   return (
     <>
-      <PageHead title={`${hr < 12 ? "Good morning" : hr < 18 ? "Good afternoon" : "Good evening"}, ${user.name.split(" ")[0]}`} desc={`${guild?.guildName || "No server"} · sales data from ${crmName} (sample data)`}><DateRange /></PageHead>
+      <PageHead title={`${hr < 12 ? "Good morning" : hr < 18 ? "Good afternoon" : "Good evening"}, ${user.name.split(" ")[0]}`} desc={`${guild?.guildName || "No server"} · sales data from ${crmName}${crmLive ? "" : " (sample data)"}`}><DateRange /></PageHead>
       <div className="bento">
         <section className="tile s8 link" tabIndex={0} aria-label="Open analytics" onClick={() => go("analytics", { an: "overall" })}>
           <div className="th"><h2>Analytics</h2><span className="muted" style={{ fontSize: "var(--text-micro)" }}>{rangeText(range)}</span><div className="r"><a className="more" href="#analytics">Open analytics <Ico name="arrow" /></a></div></div>

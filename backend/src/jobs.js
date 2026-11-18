@@ -7,7 +7,7 @@
 import { store } from "./store.js";
 import { discord } from "./discord.js";
 import { AUTO_NAMES, BUILD } from "./drafts.js";
-import { SHOPS, rangeStat } from "./sampleData.js";
+import { crmFor, crmSource, shopFor } from "./crm.js";
 import { addDays, todayUTC, ymd } from "./dates.js";
 
 const now = () => new Date().toISOString();
@@ -149,8 +149,9 @@ const HANDLERS = {
     } else {
       if (!BUILD[automation]) throw fail("This automation can’t build drafts yet.");
       const s = autosOf(ns, g.guildId)[automation] || {};
-      const shop = SHOPS.find((x) => x.id === workspace(ns).shopId) || SHOPS[0];
-      [name, messages, channel, auto] = [AUTO_NAMES[automation], BUILD[automation](shop, s, { videoId }), s.channel, automation];
+      const shop = await shopFor(ns, workspace(ns).shopId);
+      if (!shop) throw fail("No shop found in your CRM.");
+      [name, messages, channel, auto] = [AUTO_NAMES[automation], await BUILD[automation](shop, s, { videoId, crm: crmFor(ns) }), s.channel, automation];
     }
     const target = test ? cfg.modChannel : channel;
     const id = store.add(ns, "drafts", {
@@ -314,14 +315,21 @@ function clockIn(zone) {
 }
 
 async function weeklySummary(ns, gid) {
-  const shop = SHOPS.find((x) => x.id === workspace(ns).shopId) || SHOPS[0];
+  const shop = await shopFor(ns, workspace(ns).shopId);
   const to = ymd(addDays(todayUTC(), -1)), from = ymd(addDays(todayUTC(), -7));
+  let gmv = null;
+  try {
+    if (shop) gmv = (await crmFor(ns).getShopStats({ shop_id: shop.id, date_from: from, date_to: to, stats: ["total_gmv"] })).total_gmv?.v ?? null;
+  } catch (e) {
+    console.error("[weekly summary] CRM", e.message);
+  }
   const days = store.list(ns, "activity", (d) => d.guild === gid && d.date >= from && d.date <= to);
   const msgs = days.reduce((n, d) => n + Object.values(d.users || {}).reduce((a, u) => a + (u.m || 0), 0), 0);
   const joined = (store.get(ns, "members/" + gid)?.list || []).filter((m) => m.joined >= from && m.joined <= to && !m.bot).length;
   const posted = store.list(ns, "drafts", (d) => d.guild === gid && d.status === "posted" && (d.postedAt || "") >= from).length;
-  const sym = shop.region === "uk" ? "£" : "$";
-  await tellMods(ns, gid, `📊 **Last week in numbers** (${from} to ${to})\n• GMV: ${sym}${Math.round(rangeStat(shop.id, "total_gmv", from, to)).toLocaleString("en-US")} (sample CRM data)\n• New members: ${joined}\n• Messages counted: ${msgs}\n• Posts the bot published: ${posted}`);
+  const sym = shop?.region === "uk" ? "£" : "$";
+  const gmvLine = gmv == null ? "unavailable" : sym + Math.round(gmv).toLocaleString("en-US") + (crmSource(ns) === "sample" ? " (sample CRM data)" : "");
+  await tellMods(ns, gid, `📊 **Last week in numbers** (${from} to ${to})\n• GMV: ${gmvLine}\n• New members: ${joined}\n• Messages counted: ${msgs}\n• Posts the bot published: ${posted}`);
 }
 
 async function tick() {

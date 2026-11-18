@@ -189,7 +189,8 @@ export function AppProvider({ children }) {
     range, setRange, refreshKey, refresh, money,
     ...derived, canPost, chName,
     botName: derived.cfg.botName || DEFAULT_BOT, botAvatar: ws.bot?.avatar || "",
-    crmName: { cruva: "Cruva", euka: "Euka", reacher: "Reacher" }[ws.crm?.id] || "your CRM",
+    crmLive: conn.crm === "cruva",
+    crmName: conn.crm === "cruva" ? "Cruva" : { cruva: "Cruva", euka: "Euka", reacher: "Reacher" }[ws.crm?.id] || "your CRM",
     view, setView, go, creator, openCreator: setCreator,
     toast, toastMsg, putDoc, request, requestWait, saveWs, saveAutos, saveCfg, saveScoring, saveOb, saveCustom, resetWorkspace,
   };
