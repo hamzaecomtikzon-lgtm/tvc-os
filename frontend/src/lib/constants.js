@@ -23,8 +23,8 @@ export const AUTOS = [
   },
   {
     key: "viral_hooks", n: "02", name: "Viral hooks",
-    what: "The niche’s most-viewed videos from last week, with how to remake the hook.", hint: ["viral-hooks-and-ideas", "viral-hooks", "viral"],
-    defaults: { mode: "manual", days: ["Mon", "Tue", "Wed"], time: "14:00", lookback: 7, mention: "@here", voice: "" },
+    what: "One of the niche’s most-viewed videos from last week each day (#1, #2, #3): the hook second by second and how to remake it for your product.", hint: ["viral-hooks-and-ideas", "viral-hooks", "viral"],
+    defaults: { mode: "manual", days: ["Mon", "Tue", "Wed"], time: "14:00", lookback: 7, mention: "@here", niche: "", nicheLabel: "", product: "", rules: "", language: "", voice: "" },
   },
   {
     key: "winning_content", n: "03", name: "Winning angle of the week",

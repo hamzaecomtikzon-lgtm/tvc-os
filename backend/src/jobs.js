@@ -64,6 +64,24 @@ async function refreshGuild(ns, guildId, withMembers) {
   return g;
 }
 
+/** Post a draft's messages to a channel, uploading its generated card images. Returns the last message. */
+async function sendMessages(channelId, messages, { quiet } = {}) {
+  let last = null;
+  for (const m of messages) {
+    // Generated PNG cards are uploaded; preview-only SVG cards (data: URLs) stay in the app.
+    const files = (m.images || []).map((u) => /^\/api\/media\/([A-Za-z0-9_-]+)\.png$/.exec(u)).filter(Boolean)
+      .map((x, i) => ({ name: `card-${i + 1}.png`, data: store.media(x[1])?.data })).filter((f) => f.data);
+    // Tests go to the mods: @here/@everyone are defused there.
+    const text = quiet ? (m.text || "").replace(/@(here|everyone)/g, "@\u200b$1") : m.text || "";
+    if (files.length && text.length <= 2000) last = (await discord.sendFiles(channelId, files, text)) || last;
+    else {
+      if (text.trim()) last = (await discord.send(channelId, text)) || last;
+      if (files.length) last = (await discord.sendFiles(channelId, files)) || last;
+    }
+  }
+  return last;
+}
+
 const draftText = (d) => (d.messages?.length ? d.messages.map((m) => m.text).join("\n\n") : d.text || "");
 
 /** Show a new draft to the moderators, who can approve it there with a reaction. */
@@ -72,8 +90,15 @@ async function announceDraft(ns, g, id) {
   const cfg = cfgOf(ns, g.guildId);
   if (!d || !cfg.modChannel || cfg.notifyDraft === false) return;
   const where = d.channel === "dm" ? "a DM to each creator" : `<#${d.channel}>`;
-  const body = draftText(d);
-  const msg = await tellMods(ns, g.guildId, `📝 **${d.name}** is ready for review. It will go to ${where}.\n\n${body.slice(0, 1500).replace(/@(here|everyone)/g, "@​$1")}${body.length > 1500 ? "…" : ""}\n\n-# React ✅ to approve and post it, ❌ to reject. You can edit it first in the dashboard under Approvals.`);
+  // The full post as the channel will get it (cards included), then the approve/reject prompt.
+  let msg = null;
+  try {
+    await discord.send(cfg.modChannel, `📝 **${d.name}** is ready for review. Here’s exactly what will go to ${where}:`);
+    await sendMessages(cfg.modChannel, d.messages?.length ? d.messages : [{ text: d.text }], { quiet: true });
+    msg = await discord.send(cfg.modChannel, `👆 **${d.name}** → ${where}\nReact ✅ to approve and post it, ❌ to reject. You can edit it first in the dashboard under Approvals.`);
+  } catch (e) {
+    console.error("[review]", e.message);
+  }
   if (!msg) return;
   await discord.react(cfg.modChannel, msg.id, ["✅", "❌"]);
   store.update(ns, "drafts/" + id, { modMessageId: msg.id });
@@ -136,7 +161,8 @@ const HANDLERS = {
    * Build a draft. `automation` is a built-in key, or `custom` is the id of a custom automation.
    * `test` sends it to the moderators' channel instead of its own.
    */
-  async draft(ns, { automation, custom, test, replaces, source, videoId }) {
+  async draft(ns, { automation, custom, test, replaces, source, videoId, rank }) {
+    rank = Number.isInteger(rank) && rank >= 1 && rank <= 10 ? rank : null;
     const g = ownGuild(ns);
     const cfg = cfgOf(ns, g.guildId);
     let name, messages, channel, auto;
@@ -151,7 +177,7 @@ const HANDLERS = {
       const s = autosOf(ns, g.guildId)[automation] || {};
       const shop = await shopFor(ns, workspace(ns).shopId);
       if (!shop) throw fail("No shop found in your CRM.");
-      [name, messages, channel, auto] = [AUTO_NAMES[automation], await BUILD[automation](shop, s, { videoId, crm: crmFor(ns) }), s.channel, automation];
+      [name, messages, channel, auto] = [AUTO_NAMES[automation], await BUILD[automation](shop, s, { videoId, ns, tz: cfg.timezone, rank, crm: crmFor(ns) }), s.channel, automation];
     }
     const target = test ? cfg.modChannel : channel;
     const id = store.add(ns, "drafts", {
@@ -201,8 +227,7 @@ const HANDLERS = {
       const ch = g.channels.find((c) => c.id === d.channel);
       if (!ch) return back("This draft has no channel in your server. Pick one in Automations, then build it again.");
       try {
-        let last = null;
-        for (const m of messages) last = (await discord.send(ch.id, m.text)) || last;
+        const last = await sendMessages(ch.id, messages);
         if (last && !d.test) await discord.react(ch.id, last.id, POSTED_REACTIONS);
         store.update(ns, path, {
           status: "posted", error: null, by: who, postedAt: now(),
@@ -232,8 +257,13 @@ const HANDLERS = {
     const d = ID_RE.test(draftId || "") && store.get(ns, "drafts/" + draftId);
     if (!d) throw fail("Unknown draft.", 404);
     if (!cfgOf(ns, g.guildId).modChannel) throw fail("Pick an approvals channel in Settings → Channels first.", 409, "no_mod_channel");
-    const sent = await tellMods(ns, g.guildId, `🧪 **Test: ${d.name}**\n\n${draftText(d).replace(/@(here|everyone)/g, "@​$1")}`);
-    if (!sent) throw fail("The bot can’t post in your approvals channel. Give it View Channel and Send Messages there.", 403, "missing_permission");
+    const mod = cfgOf(ns, g.guildId).modChannel;
+    try {
+      await discord.send(mod, `🧪 **Test: ${d.name}**. This is exactly what the channel will get:`);
+      await sendMessages(mod, d.messages?.length ? d.messages : [{ text: d.text }], { quiet: true });
+    } catch (e) {
+      throw fail(e.status === 403 ? "The bot can’t post in your approvals channel. Give it View Channel, Send Messages and Attach Files there." : e.message, 403, "missing_permission");
+    }
   },
 
   /** Reply to a creator's DM as the bot. */

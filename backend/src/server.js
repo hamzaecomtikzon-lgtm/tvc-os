@@ -8,13 +8,15 @@
  *   GET  /api/events                             live document changes (server-sent events)
  *   POST /api/requests                           ask the bot to do something (see jobs.js)
  *   POST /api/crm/<tool>                         CRM data (see crm.js)
+ *   GET  /api/media/<id>.png                     a generated card image (public, unguessable id)
  */
 import "./env.js";
 import { createServer } from "node:http";
 import { auth } from "./auth.js";
 import { store } from "./store.js";
 import { discord } from "./discord.js";
-import { crmFor, crmSource } from "./crm.js";
+import { crmFor, crmSource, cruvaKeyFor, forgetCruvaKey, verifyCruvaKey } from "./crm.js";
+import { crmKeys } from "./crmKeys.js";
 import { cfgOf, claimedByOther, startJob, startScheduler } from "./jobs.js";
 import { gateway } from "./gateway.js";
 import { onEvent } from "./bot.js";
@@ -28,7 +30,7 @@ const WRITABLE = ["workspace", "config", "automations", "allowlist", "scoring", 
 const MOD_JOBS = ["post", "reject", "test", "dm", "dm_read", "draft"];
 const PATH_RE = /^([a-z_]+)\/([A-Za-z0-9_.-]{1,80})$/;
 
-const fail = (status, message, code = "bad_request") => Object.assign(new Error(message), { status, code });
+const fail = (status, message, code = "bad_request", field) => Object.assign(new Error(message), { status, code, ...(field ? { field } : {}) });
 
 function send(res, status, body) {
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
@@ -105,6 +107,14 @@ async function route(req, res) {
   }
   if (p === "/api/auth/me" && m === "GET") return send(res, 200, { user: auth.user(req) });
 
+  // Generated cards (winning angle). Public by unguessable id so <img> tags work without auth headers.
+  if (p.startsWith("/api/media/") && m === "GET") {
+    const file = store.media(p.slice("/api/media/".length).replace(/\.png$/, ""));
+    if (!file) throw fail(404, "Not found.", "not_found");
+    res.writeHead(200, { "Content-Type": file.mime, "Cache-Control": "public, max-age=31536000, immutable" });
+    return res.end(file.data);
+  }
+
   // Local tests feed gateway events in by hand (never enabled in normal runs).
   if (process.env.KREO_TEST_EVENTS === "1" && p === "/api/_test/event" && m === "POST") {
     const { type, data } = await readJson(req);
@@ -119,7 +129,27 @@ async function route(req, res) {
   const admin = user.role === "Owner" || user.role === "Admin";
   const needAdmin = () => { if (!admin) throw fail(403, "Your role can’t change this. Ask the workspace owner.", "forbidden"); };
 
-  if (p === "/api/config" && m === "GET") return send(res, 200, { discord: await discord.info(), gateway: gateway.status, ai: ai.configured(), crm: crmSource(ns) });
+  if (p === "/api/config" && m === "GET") return send(res, 200, { discord: await discord.info(), gateway: gateway.status, ai: ai.configured(), crm: crmSource(ns), crmConnection: crmKeys.info(ns) });
+
+  // The workspace's own CRM key. The key goes in once and never comes back out: reads return only its last 4 characters.
+  if (p === "/api/crm-connection" && m === "GET") return send(res, 200, { connection: crmKeys.info(ns), source: crmSource(ns) });
+  if (p === "/api/crm-connection" && m === "PUT") {
+    needAdmin();
+    const { provider, apiKey } = await readJson(req);
+    if (provider !== "cruva") throw fail(400, "Only Cruva can be connected for now. Euka and Reacher are coming.", "provider_unavailable");
+    const key = typeof apiKey === "string" ? apiKey.trim() : "";
+    if (key.length < 16 || key.length > 512 || /\s/.test(key)) throw fail(400, "That doesn’t look like a Cruva API key. Copy the whole key from Cruva → Settings → API.", "bad_key", "apiKey");
+    const shops = await verifyCruvaKey(key);
+    forgetCruvaKey(cruvaKeyFor(ns));
+    crmKeys.save(ns, "cruva", key, shops.length);
+    return send(res, 200, { connection: crmKeys.info(ns), source: crmSource(ns), shops: await crmFor(ns).listShops() });
+  }
+  if (p === "/api/crm-connection" && m === "DELETE") {
+    needAdmin();
+    forgetCruvaKey(crmKeys.key(ns, "cruva"));
+    crmKeys.remove(ns);
+    return send(res, 200, { connection: null, source: crmSource(ns) });
+  }
 
   if (p === "/api/ai/automation" && m === "POST") {
     if (!ai.configured()) throw fail(503, "The AI builder isn’t set up on the server.", "ai_off");
@@ -160,6 +190,8 @@ async function route(req, res) {
   if (p === "/api/docs" && m === "GET") return send(res, 200, { docs: store.all(ns) });
   if (p === "/api/docs" && m === "DELETE") {
     needAdmin();
+    forgetCruvaKey(crmKeys.key(ns, "cruva"));
+    crmKeys.remove(ns); // deleting the workspace also deletes its saved CRM key
     store.clear(ns);
     return send(res, 200, {});
   }

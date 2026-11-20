@@ -7,6 +7,33 @@ import Anthropic from "@anthropic-ai/sdk";
 const MODEL = process.env.ANTHROPIC_MODEL || "claude-opus-5-5";
 let client = null;
 
+const str = { type: "string" };
+const obj = (props) => ({ type: "object", additionalProperties: false, required: Object.keys(props), properties: props });
+const WINNING_SCHEMA = obj({
+  product_short: str,
+  angle: obj({ line: str, highlight: str, translation: str, summary: str }),
+  why_heading: str,
+  why: { type: "array", items: obj({ title: str, title_note: str, body: str }) },
+  script: { type: "array", items: obj({ label: str, line: str, translation: str, hook_index: { type: "integer" } }) },
+  diagnosis_body: str,
+  opening: obj({ line: str, translation: str, note: str }),
+  replicate: { type: "array", items: obj({ title: str, line: str, translation: str }) },
+  checklist: { type: "array", items: str },
+  closing: str,
+});
+const VIRAL_SCHEMA = obj({
+  product_short: str,
+  hook_title: str,
+  hook_translation: str,
+  hook_note: str,
+  why: str,
+  beats: { type: "array", items: obj({ title: str, body: str }) },
+  adapt_name: str,
+  adapt_intro: str,
+  steps: { type: "array", items: obj({ title: str, action: str, line: str, translation: str }) },
+  on_brief: { type: "array", items: str },
+});
+
 export const ai = {
   configured: () => Boolean(process.env.ANTHROPIC_API_KEY),
 
@@ -39,6 +66,114 @@ export const ai = {
     const [first, ...rest] = out.split("\n");
     const action = { REPLY: "reply", ESCALATE: "escalate" }[first.trim().toUpperCase()] || "skip";
     return { action, text: rest.join("\n").trim() };
+  },
+
+  /**
+   * Break down the week's winning video for the winning-angle post: the angle, why it sells,
+   * the script beat by beat, a better opening and remake steps. Returns the parsed object
+   * (shape in WINNING_SCHEMA), or null when the model declined.
+   */
+  async winningAngle({ brand, voice, video, stats }) {
+    client ||= new Anthropic();
+    const system = [
+      `You are the community lead for ${brand}'s TikTok Shop affiliate creator community. Every week you break down the #1 video by GMV so other creators can remake its angle.`,
+      "You get the video's transcript, the hooks the CRM detected (with 1-10 scores), and its numbers. Write a breakdown that is specific to THIS video: quote its real lines, name its real product and problem. Nothing generic.",
+      "Language: quote lines exactly in the video's own language (fix only obvious transcription errors, and you may shorten with … ). When the video is not in English, give a short natural English translation for every quoted line; when it is in English, leave every translation field empty.",
+      "Fields:",
+      "- product_short: the product in 2-4 words, the way a creator would say it (e.g. \"Ketoconazole Shampoo\").",
+      "- angle.line: the angle as one short punchy line in the video's language, 4-9 words, built from the creator's own words (e.g. \"Lo único que me curó, en 7 días\"). angle.highlight: the exact trailing words of angle.line that carry the payoff (a timeline, result or number), to color green. angle.translation: English translation (empty for English videos). angle.summary: one English sentence saying what the creator does, using the @handle (e.g. \"@x shows their own scalp, then the one shampoo that fixed it.\").",
+      "- why_heading: \"Why this angle sells a <product category>\" (e.g. \"Why this angle sells a scalp shampoo\").",
+      "- why: exactly 3 reasons. title: 2-5 words (may be a quoted phrase from the video); title_note: English gloss if the title is a non-English phrase, else empty; body: one sentence, max 16 words.",
+      "- script: the video's beats in the order they happen, 5-7 rows (merge small beats, e.g. ingredients and origin are one PROOF row). label: one or two words in English caps style (PROBLEM, THE FIX, PROOF, SYMPTOMS, DEMO, RESULT, CART, ASK…). line: the creator's actual words for that beat, max 12 words (trim with …). translation as above. hook_index: the index (0-based) of the detected hook this line matches, or -1.",
+      "- diagnosis_body: one sentence (max 18 words) that follows the words \"X% swiped in 2 seconds.\" (already shown, so don't repeat the percentage) and says which strong lines came too late, e.g. \"Their best line (9/10) came second and '7 días' came last.\" Refer to the creator by @handle or as \"their\", never he/she.",
+      "- opening: a better first line made by reordering the creator's own strongest lines (no new claims). line, translation, note (one short English sentence on what to show on screen and in what order).",
+      "- replicate: exactly 5 steps another creator follows to remake this angle with their own face and the same product. title: short imperative ending in a colon-free phrase (e.g. \"Open on your own scalp, close up\"). line: a sample line to say, in the video's language. translation as above. If a step is an action rather than a line, line may describe it in English and translation is empty.",
+      "- checklist: 4-6 items, 1-3 words each.",
+      "- closing: one bold motivating sentence tying the hold-rate problem to what the creator should do (max 20 words).",
+      "Never invent results, prices, discounts, commission rates or medical claims beyond what the creator said. Plain, punchy, creator-friendly English.",
+      voice ? `Brand voice notes: ${voice}` : "",
+    ].filter(Boolean).join("\n");
+
+    const hooks = (video.hooks || []).map((x, i) => `${i}. [${x.score ?? "?"}/10] ${x.hook}`).join("\n") || "(none detected)";
+    const res = await client.beta.messages.create({
+      model: MODEL,
+      max_tokens: 8000,
+      betas: ["server-side-fallback-2026-07-01"],
+      fallbacks: "default",
+      output_config: { effort: "medium", format: { type: "json_schema", schema: WINNING_SCHEMA } },
+      system,
+      messages: [{
+        role: "user",
+        content: [
+          `Creator: @${video.handle}`,
+          `Product listing title: ${video.title || video.product || "unknown"}`,
+          `Summary of the video: ${video.content_overview || "n/a"}`,
+          `Transcript:\n${video.transcript || "(no transcript; work from the hooks and summary)"}`,
+          `Detected hooks:\n${hooks}`,
+          `Numbers this week: ${stats}`,
+        ].join("\n\n"),
+      }],
+    });
+    if (res.stop_reason === "refusal") return null;
+    return JSON.parse(res.content.filter((b) => b.type === "text").map((b) => b.text).join(""));
+  },
+
+  /**
+   * Break down a viral video from the niche (usually another brand's) and adapt it to the
+   * brand's product. `frames` is `[{ t, jpg }]` (may be empty). Returns VIRAL_SCHEMA's shape, or null.
+   */
+  async viralAngle({ brand, voice, video, frames, duration, caption, product, rules, language }) {
+    client ||= new Anthropic();
+    const system = [
+      `You are the community lead for ${brand}'s TikTok Shop affiliate creator community. Every day this week you break down one of the niche's most-viewed videos from last week, often from another brand, so ${brand}'s creators can steal the hook and use it for ${brand}'s product.`,
+      frames.length
+        ? "You get frames from the video, each labelled with its second. Describe only what you can actually see in them: what is in frame one, when the product appears, what the hands do, on-screen text, setting, energy, length. Use real timestamps (\"at second 2\", \"by second 6\")."
+        : "You don't have the video's frames, only its text data. Don't invent visual details or timestamps you can't know; work from the transcript, hooks and summary.",
+      "Refer to the creator by @handle or as \"they\"/\"their\", never he/she.",
+      "Fields:",
+      "- product_short: the video's product in 3-6 words (e.g. \"Head & Shoulders Clinical Strength Shampoo\").",
+      "- hook_title: the hook in a few words. If the hook is a line said or shown on screen, put that exact line in quotes in its original language (e.g. \"\\\"Dile adiós a la caspa con este shampoo\\\"\"); otherwise a short lowercase visual description (e.g. \"two bottles up, already talking\").",
+      "- hook_translation: English translation of a non-English hook_title line, else empty. Quote on-screen or spoken lines with obvious typos fixed (e.g. \"a Dios\" → \"adiós\"), and never comment on the typo.",
+      "- hook_note: one short lowercase line about frame one (e.g. \"on screen from second 1, bottle already in her hand\" or \"frame one: a bottle in each hand pushed toward the camera, mid-sentence, product name on screen\").",
+      "- why: two or three short sentences on why the hook stops the scroll. If the video also sold (GMV > 0), say so.",
+      "- beats: exactly 4 beats after the hook, in order. title: short, with a timestamp where you have one (e.g. \"Texture by second 2\"); body: one or two plain sentences on what happens and why it works.",
+      `- adapt_name: what to call ${brand}'s product in the heading, 2-4 words without the brand name (e.g. \"keto bundle\").`,
+      "- adapt_intro: one short line on how the move transfers (e.g. \"Fast and simple: say the promise, show the texture, show all three.\").",
+      `- steps: exactly 5 steps for a creator remaking this with ${brand}'s product. title: short instruction. action: what to do or show, in English (may be empty). line: a line to say, in ${language || "the video's language"} (may be empty). translation: English translation of a non-English line, else empty.`,
+      "- on_brief: the brand's content rules as 3-6 short items (from the rules given; empty array if none are given).",
+      "Plain, punchy, creator-friendly English. Never invent claims, prices, discounts or results for the brand's product beyond its description.",
+      voice ? `Brand voice notes: ${voice}` : "",
+    ].filter(Boolean).join("\n");
+
+    const content = [];
+    for (const f of frames) {
+      content.push({ type: "text", text: `Second ${f.t}:` });
+      content.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: f.jpg.toString("base64") } });
+    }
+    content.push({
+      type: "text",
+      text: [
+        `Video: @${video.handle} · ${video.views} views · ${video.gmv ? "GMV " + video.gmv : "no tracked sales"} · ${duration ? duration + " seconds long" : "length unknown"}`,
+        `Product in the video: ${video.product}`,
+        caption ? `Caption: ${caption}` : "",
+        video.overview ? `Summary: ${video.overview}` : "",
+        video.transcript ? `Transcript: ${video.transcript}` : "",
+        video.hooks?.length ? "Detected hooks:\n" + video.hooks.map((h) => `- [${h.score}/10] ${h.hook}`).join("\n") : "",
+        `${brand}'s product to adapt it to: ${product}`,
+        rules ? `${brand}'s content rules: ${rules}` : "No content rules given.",
+      ].filter(Boolean).join("\n"),
+    });
+    const res = await client.beta.messages.create({
+      model: MODEL,
+      max_tokens: 8000,
+      betas: ["server-side-fallback-2026-07-01"],
+      fallbacks: "default",
+      output_config: { effort: "medium", format: { type: "json_schema", schema: VIRAL_SCHEMA } },
+      system,
+      messages: [{ role: "user", content }],
+    });
+    if (res.stop_reason === "refusal") return null;
+    return JSON.parse(res.content.filter((b) => b.type === "text").map((b) => b.text).join(""));
   },
 
   /**

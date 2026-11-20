@@ -164,6 +164,25 @@ export function AppProvider({ children }) {
     setRefreshKey((k) => k + 1);
   }, []);
 
+  /** After the CRM key changes: re-read where data comes from, reload the shops, refetch every page's data. */
+  const reloadCrm = useCallback(async () => {
+    await checkDiscord();
+    invalidateCruva();
+    try { setShops(await cruva.listShops()); } catch { /* pages say so themselves */ }
+    setRefreshKey((k) => k + 1);
+  }, [checkDiscord]);
+
+  /** Connect the workspace's own CRM key (checked against the CRM first). Rejects with the server's message. */
+  const connectCrm = useCallback(async (provider, apiKey) => {
+    const r = await api("PUT", "/crm-connection", { provider, apiKey });
+    await reloadCrm();
+    return r;
+  }, [reloadCrm]);
+  const disconnectCrm = useCallback(async () => {
+    await api("DELETE", "/crm-connection");
+    await reloadCrm();
+  }, [reloadCrm]);
+
   /** Delete the workspace's saved data and start setup again. Nothing is removed from Discord. */
   const resetWorkspace = useCallback(async () => {
     try {
@@ -171,11 +190,10 @@ export function AppProvider({ children }) {
     } catch (e) {
       return toast("Couldn’t delete the workspace. " + (e?.message || ""));
     }
-    invalidateCruva();
     location.hash = "#dashboard";
-    setRefreshKey((k) => k + 1);
+    reloadCrm(); // the saved CRM key was deleted with the workspace
     toast("Workspace deleted. Set it up again.");
-  }, [toast]);
+  }, [toast, reloadCrm]);
 
   const canPost = useCallback((id) => {
     const c = channels.find((x) => x.id === id);
@@ -190,6 +208,8 @@ export function AppProvider({ children }) {
     ...derived, canPost, chName,
     botName: derived.cfg.botName || DEFAULT_BOT, botAvatar: ws.bot?.avatar || "",
     crmLive: conn.crm === "cruva",
+    crmConn: conn.crmConnection || null, // the workspace's own key: { provider, last4, shops, connectedAt, readable } or null
+    connectCrm, disconnectCrm, reloadCrm,
     crmName: conn.crm === "cruva" ? "Cruva" : { cruva: "Cruva", euka: "Euka", reacher: "Reacher" }[ws.crm?.id] || "your CRM",
     view, setView, go, creator, openCreator: setCreator,
     toast, toastMsg, putDoc, request, requestWait, saveWs, saveAutos, saveCfg, saveScoring, saveOb, saveCustom, resetWorkspace,

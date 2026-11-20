@@ -2,4 +2,6 @@ node_modules/
 .env
 .env.*
 !.env.example
+data/check-output/
+data/.kreo-secret
 data/

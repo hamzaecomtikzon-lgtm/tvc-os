@@ -139,6 +139,7 @@ export function videoPool(shopId) {
       title: `${product} · ${HOOKS[h1][0]}`,
       content_overview: `@${handle} films ${desc}, opens on a tight close-up and pins the TikTok Shop link in the first comment.`,
       post_date: ymd(addDays(today, -age)),
+      transcript: `${HOOKS[h1][0]} I've been using this ${product.toLowerCase()} for two weeks and I'm honestly shocked. ${HOOKS[h2][0]} Look at the texture, it's so light. I'll leave it in the orange cart for you, it's on sale right now. Try it and tell me what you think.`,
       hooks: [
         { hook: HOOKS[h1][0], explanation: HOOKS[h1][1], score: 6 + Math.floor(r() * 4) },
         { hook: HOOKS[h2][0], explanation: HOOKS[h2][1], score: 5 + Math.floor(r() * 4) },

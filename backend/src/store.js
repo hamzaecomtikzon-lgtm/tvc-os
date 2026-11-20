@@ -4,14 +4,15 @@
  * to subscribers so open browser tabs stay live (see /api/events).
  */
 import { DatabaseSync } from "node:sqlite";
+import { randomBytes } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const file = process.env.DATABASE_FILE || fileURLToPath(new URL("../data/kreo.db", import.meta.url));
-mkdirSync(dirname(file), { recursive: true });
+export const DB_FILE = process.env.DATABASE_FILE || fileURLToPath(new URL("../data/kreo.db", import.meta.url));
+mkdirSync(dirname(DB_FILE), { recursive: true });
 
-export const sql = new DatabaseSync(file);
+export const sql = new DatabaseSync(DB_FILE);
 sql.exec(`
   PRAGMA journal_mode = WAL;
   CREATE TABLE IF NOT EXISTS users (
@@ -23,6 +24,9 @@ sql.exec(`
   );
   CREATE TABLE IF NOT EXISTS docs (
     ns TEXT NOT NULL, path TEXT NOT NULL, doc TEXT NOT NULL, PRIMARY KEY (ns, path)
+  );
+  CREATE TABLE IF NOT EXISTS media (
+    id TEXT PRIMARY KEY, ns TEXT NOT NULL, mime TEXT NOT NULL, data BLOB NOT NULL, created_at TEXT NOT NULL
   );
   CREATE TABLE IF NOT EXISTS invites (
     email TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, role TEXT NOT NULL, created_at TEXT NOT NULL
@@ -44,6 +48,9 @@ const q = {
   del: sql.prepare("DELETE FROM docs WHERE ns = ? AND path = ?"),
   clear: sql.prepare("DELETE FROM docs WHERE ns = ?"),
   owners: sql.prepare("SELECT ns, doc FROM docs WHERE path = 'workspace/main'"),
+  mediaPut: sql.prepare("INSERT INTO media (id, ns, mime, data, created_at) VALUES (?, ?, ?, ?, ?)"),
+  mediaGet: sql.prepare("SELECT mime, data FROM media WHERE id = ?"),
+  mediaClear: sql.prepare("DELETE FROM media WHERE ns = ?"),
 };
 
 const listeners = new Set();
@@ -92,8 +99,20 @@ export const store = {
     store.set(ns, col + "/" + id, doc);
     return id;
   },
+  /** Save a generated image (kept out of the documents so page loads stay small). Returns its unguessable id. */
+  putMedia(ns, data, mime = "image/png") {
+    const id = randomBytes(18).toString("base64url");
+    q.mediaPut.run(id, ns, mime, data, new Date().toISOString());
+    return id;
+  },
+  /** `{ mime, data }` for a media id, or null. */
+  media(id) {
+    const row = /^[A-Za-z0-9_-]{24}$/.test(id || "") ? q.mediaGet.get(id) : null;
+    return row ? { mime: row.mime, data: Buffer.from(row.data) } : null;
+  },
   clear(ns) {
     q.clear.run(ns);
+    q.mediaClear.run(ns);
     emit(ns, null, null);
   },
   /** The account that owns a workspace. */

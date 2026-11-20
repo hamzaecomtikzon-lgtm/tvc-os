@@ -127,7 +127,16 @@ function Editor({ a, close }) {
           <div className="trow" style={{ border: 0, padding: 0 }}><div><b>Needs approval</b><span>Drafts go to {mod} and Approvals first</span></div><Sw checked={s.mode !== "auto"} label="Needs approval" onChange={(v) => set({ mode: v ? "manual" : "auto" })} /></div>
         </>
       )}
-      {a.key === "viral_hooks" && <label className="field">Look back (days)<input className="input" type="number" min="1" max="30" value={s.lookback} onChange={(e) => set({ lookback: Math.max(1, parseInt(e.target.value, 10) || 7) })} /></label>}
+      {a.key === "viral_hooks" && (
+        <>
+          <label className="field">Niche search words<input className="input" placeholder="dandruff, scalp shampoo" value={s.niche || ""} onChange={(e) => set({ niche: e.target.value })} /><small>Finds the most-viewed videos for matching products across TikTok Shop. Comma-separated, up to 3. Each scheduled day posts the next one: the first day #1, the second #2.</small></label>
+          <label className="field">Niche name in the post<input className="input" placeholder="Anti-dandruff" value={s.nicheLabel || ""} onChange={(e) => set({ nicheLabel: e.target.value })} /></label>
+          <label className="field">Your product to remake it for<textarea className="input" placeholder="Keto bundle: 1% ketoconazole shampoo with tea tree oil, conditioner and scalp spray. Made in Italy." value={s.product || ""} onChange={(e) => set({ product: e.target.value })} /><small>What it is and what’s true about it. Empty uses your best seller.</small></label>
+          <label className="field">On-brief rules<textarea className="input" placeholder="Product visible early. Say “calms”, never “cures”. No prices. No other brand names." value={s.rules || ""} onChange={(e) => set({ rules: e.target.value })} /></label>
+          <label className="field">Language for sample lines<input className="input" placeholder="Same as the video" value={s.language || ""} onChange={(e) => set({ language: e.target.value })} /></label>
+          <label className="field">Look back (days)<input className="input" type="number" min="1" max="30" value={s.lookback} onChange={(e) => set({ lookback: Math.max(1, parseInt(e.target.value, 10) || 7) })} /><small>7 uses last week, Sunday to Saturday.</small></label>
+        </>
+      )}
       {a.key === "leaderboard" && <label className="field">How many creators<input className="input" type="number" min="3" max="10" value={s.topN} onChange={(e) => set({ topN: Math.max(3, Math.min(10, parseInt(e.target.value, 10) || 5)) })} /></label>}
       {a.key === "wins" && <label className="field">Milestones (sales)<input className="input" value={s.thresholds} onChange={(e) => set({ thresholds: e.target.value })} /><small>Comma-separated, like 1, 3, 10, 30, 50.</small></label>}
       {a.key === "general_chat" && (

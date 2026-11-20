@@ -85,7 +85,7 @@ function Draft({ d }) {
       <div style={{ minWidth: 0 }}>
         <div className="sec-t">Preview</div>
         <Dc channel={d.channelName} dm={d.channel === "dm"} messages={msgs} time={d.status === "posted" ? fmtTime(d.postedAt) : "Waiting"} />
-        {msgs.some((m) => m.images?.length) && <p className="muted" style={{ fontSize: "var(--text-micro)", marginTop: 6 }}>The card is a preview. Discord gets the text; the image isn’t uploaded yet.</p>}
+        {msgs.some((m) => m.images?.some((u) => u.startsWith("data:"))) && <p className="muted" style={{ fontSize: "var(--text-micro)", marginTop: 6 }}>The card is a preview. Discord gets the text; the image isn’t uploaded yet.</p>}
       </div>
     </article>
   );

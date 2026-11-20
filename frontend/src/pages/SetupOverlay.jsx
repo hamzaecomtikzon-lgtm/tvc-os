@@ -418,44 +418,65 @@ function StepChannels({ ctx }) {
 
 /* ---------- Step 3: CRM and launch ---------- */
 function StepCrm({ ctx }) {
-  const { ws, guild, channels, shops, bot, botName, map, crm, saveWs, setShop, toast, goStep, commitChannels } = ctx;
+  const { ws, guild, channels, shops, bot, botName, map, crm, saveWs, setShop, toast, goStep, commitChannels, connectCrm, crmConn } = ctx;
   const app = ctx; // crmLive / crmName
   const c = CRMS.find((x) => x.id === crm.id);
   const [key, setKey] = useState("");
   const [show, setShow] = useState(false);
   const [hint, setHint] = useState("");
+  const [error, setError] = useState("");
   const [checking, setChecking] = useState(-1); // index of the running check
   const [launching, setLaunching] = useState(false);
   const input = useRef(null);
   const timers = useRef([]);
   useEffect(() => () => timers.current.forEach(clearTimeout), []);
+  const canConnect = c?.id === "cruva"; // the only CRM with live sync so far
+  const ownKey = crmConn?.provider === c?.id && crmConn?.readable;
 
   const pick = (id) => {
     setKey("");
     setHint("");
+    setError("");
     saveWs({ crm: { id, ok: false } });
     setTimeout(() => input.current?.focus(), 0);
   };
 
-  /* Live CRM sync isn't built yet: the key isn't sent anywhere and the dashboard shows sample data. */
-  const connect = () => {
+  /* Send the key to the server, which checks it with the CRM and stores it encrypted. The checklist animates while that runs. */
+  const connect = async () => {
     if (!key.trim()) {
       setHint("Paste your API key first");
       return input.current?.focus();
     }
+    setError("");
+    timers.current.forEach(clearTimeout);
     const tick = (i) => {
       setChecking(i);
-      if (i < CRM_CHECKS.length) return timers.current.push(setTimeout(() => tick(i + 1), 550));
-      timers.current.push(setTimeout(async () => {
-        const shopId = ws.shopId || shops[0]?.id || "";
-        if (shopId) setShop(shopId);
-        await saveWs({ crm: { id: c.id, ok: true }, shopId });
-        setChecking(-1);
-        setKey("");
-        toast(`${c.name} connected`);
-      }, 300));
+      if (i < CRM_CHECKS.length - 1) timers.current.push(setTimeout(() => tick(i + 1), 700));
     };
     tick(0);
+    try {
+      const r = await connectCrm(c.id, key.trim());
+      timers.current.forEach(clearTimeout);
+      setChecking(CRM_CHECKS.length);
+      const list = r.shops || [];
+      const shopId = list.some((x) => x.id === ws.shopId) ? ws.shopId : list[0]?.id || "";
+      if (shopId) setShop(shopId);
+      await saveWs({ crm: { id: c.id, ok: true }, shopId });
+      setKey("");
+      toast(`${c.name} connected: ${list.length} shop${list.length === 1 ? "" : "s"} found`);
+    } catch (e) {
+      timers.current.forEach(clearTimeout);
+      setError(e.message || "Couldn’t connect. Try again.");
+      setTimeout(() => input.current?.focus(), 0);
+    }
+    setChecking(-1);
+  };
+
+  /* Continue without a key of our own: sample data (Euka, Reacher), or the server's own Cruva connection. */
+  const skip = async () => {
+    const shopId = ws.shopId || shops[0]?.id || "";
+    if (shopId) setShop(shopId);
+    await saveWs({ crm: { id: c.id, ok: true }, shopId });
   };
 
   const change = () => saveWs({ crm: { id: crm.id, ok: false } });
@@ -487,19 +508,21 @@ function StepCrm({ ctx }) {
         </div>
       )}
 
-      {c && !crm.ok && (
+      {c && !crm.ok && canConnect && (
         <div className="k-keybox">
           <label className="k-field" htmlFor="crm-key">{c.name} API key<small>{c.how}</small></label>
           <div className="k-keyrow">
             <input
               className="k-input" id="crm-key" ref={input} type={show ? "text" : "password"} value={key} autoComplete="off" spellCheck={false}
-              placeholder={hint || `${c.id}_live_••••••••••••••••`} disabled={checking >= 0}
-              onChange={(e) => setKey(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") connect(); }}
+              placeholder={hint || `${c.id}_live_••••••••••••••••`} disabled={checking >= 0} aria-invalid={error ? "true" : undefined} aria-describedby={error ? "crm-key-err" : undefined}
+              onChange={(e) => { setKey(e.target.value); setError(""); }} onKeyDown={(e) => { if (e.key === "Enter") connect(); }}
             />
             <button className="k-btn" type="button" onClick={() => setShow((s) => !s)} aria-label={show ? "Hide key" : "Show key"} aria-pressed={show}><Icon name={show ? "eyeOff" : "eye"} /></button>
-            <button className="k-btn primary" type="button" onClick={connect} disabled={checking >= 0}><Icon name="plug" />Connect</button>
+            <button className="k-btn primary" type="button" onClick={connect} disabled={checking >= 0}><Icon name="plug" />{checking >= 0 ? "Checking…" : "Connect"}</button>
           </div>
-          <p className="k-micro">{BRAND} only reads data. It never changes anything in {c.name}. {app.crmLive ? `${app.crmName} is already connected on the server, so you can skip the key: the dashboard shows your live data.` : `Live ${c.name} sync isn’t connected yet: your key isn’t stored, and the dashboard shows sample data for now.`}</p>
+          {error && <p className="k-err" id="crm-key-err" role="alert">{error}</p>}
+          <p className="k-micro">{BRAND} only reads data. It never changes anything in {c.name}. Your key is checked with {c.name}, stored encrypted, and never shown again.</p>
+          {app.crmLive && !crmConn && <p className="k-micro">This workspace already reads live {app.crmName} data through the server’s own connection. <button className="k-btn sm ghost" type="button" onClick={skip}>Continue without a key</button></p>}
           {checking >= 0 && (
             <div className="k-checks">
               {CRM_CHECKS.map((label, i) => (
@@ -510,11 +533,18 @@ function StepCrm({ ctx }) {
         </div>
       )}
 
+      {c && !crm.ok && !canConnect && (
+        <div className="k-keybox">
+          <p className="k-micro">Live {c.name} sync is coming soon. You can launch now with sample creators and sales, then connect {c.name} in Settings → CRM once it’s available, or connect Cruva instead.</p>
+          <div><button className="k-btn" type="button" onClick={skip}><Icon name="check" />Continue with sample data</button></div>
+        </div>
+      )}
+
       {c && crm.ok && (
         <>
           <div className="k-connected">
             <Icon name="check" />
-            <div><b>{c.name} selected.</b> {app.crmLive ? `Live data from ${app.crmName}.` : `Until live sync is connected, ${BRAND} shows sample creators and sales.`}</div>
+            <div><b>{app.crmLive ? `${c.name} connected.` : `${c.name} selected.`}</b> {app.crmLive ? `Live data from ${app.crmName}${ownKey ? ` · key ending ${crmConn.last4} · ${crmConn.shops} shop${crmConn.shops === 1 ? "" : "s"}` : ""}.` : `Until live sync is connected, ${BRAND} shows sample creators and sales.`}</div>
             <button className="k-btn sm" type="button" style={{ marginLeft: "auto" }} onClick={change}>Change</button>
           </div>
           {!app.crmLive && <><div className="k-found">
@@ -527,7 +557,7 @@ function StepCrm({ ctx }) {
             <div><Icon name="check" /><div><b>Bot</b><span>{botName}{bot.avatar ? "" : " · no picture yet"}</span></div><button className="k-btn sm ghost" type="button" onClick={() => goStep(1)}>Edit</button></div>
             <div><Icon name="check" /><div><b>Server</b><span>{guild.guildName} · {channels.length} channels{created ? `, ${created} created by ${BRAND}` : ""}</span></div><button className="k-btn sm ghost" type="button" onClick={() => goStep(1)}>Edit</button></div>
             <div><Icon name="check" /><div><b>Automations</b><span>{withChannel} of 6 have a channel · approvals in #{modName}</span></div><button className="k-btn sm ghost" type="button" onClick={() => goStep(2)}>Edit</button></div>
-            <div><Icon name="check" /><div><b>CRM</b><span>{c.name} · read-only</span></div><button className="k-btn sm ghost" type="button" onClick={change}>Edit</button></div>
+            <div><Icon name="check" /><div><b>CRM</b><span>{c.name} · {app.crmLive ? "live" : "sample data"} · read-only</span></div><button className="k-btn sm ghost" type="button" onClick={change}>Edit</button></div>
           </div>
         </>
       )}

@@ -25,10 +25,12 @@ export class DiscordError extends Error {
 async function call(method, path, body) {
   if (!token()) throw new DiscordError("The Discord bot token isn’t set. Add DISCORD_BOT_TOKEN to backend/.env and restart the server.", 503, "not_configured");
   for (let attempt = 0; ; attempt++) {
+    // A FormData body (file uploads) sets its own multipart Content-Type.
+    const form = body instanceof FormData;
     const res = await fetch(API + path, {
       method,
-      headers: { Authorization: "Bot " + token(), "Content-Type": "application/json", "User-Agent": "DiscordBot (https://localhost, 1.0)" },
-      body: body ? JSON.stringify(body) : undefined,
+      headers: { Authorization: "Bot " + token(), ...(form ? {} : { "Content-Type": "application/json" }), "User-Agent": "DiscordBot (https://localhost, 1.0)" },
+      body: form ? body : body ? JSON.stringify(body) : undefined,
     });
     if (res.status === 429 && attempt < 4) {
       const wait = (await res.json().catch(() => ({}))).retry_after || 1;
@@ -187,6 +189,21 @@ export const discord = {
       });
     }
     return last;
+  },
+
+  /**
+   * Post images (PNG buffers) to a channel, with optional text. `files` is `[{ name, data }]`, up to 10.
+   * Returns the message.
+   */
+  async sendFiles(channelId, files, text = "") {
+    const form = new FormData();
+    form.append("payload_json", JSON.stringify({
+      ...(text ? { content: String(text).slice(0, 2000) } : {}),
+      allowed_mentions: { parse: ["users", "everyone"] },
+      attachments: files.slice(0, 10).map((f, i) => ({ id: i, filename: f.name })),
+    }));
+    files.slice(0, 10).forEach((f, i) => form.append(`files[${i}]`, new Blob([f.data], { type: "image/png" }), f.name));
+    return call("POST", `/channels/${channelId}/messages`, form);
   },
 
   /** Send a direct message to a member. Returns `{ channelId, message }`. */
