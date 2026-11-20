@@ -23,6 +23,9 @@ export const autosOf = (ns, gid) => store.get(ns, "automations/" + gid)?.items |
 export const obOf = (ns, gid) => ({
   welcome: "Hey {first_name}, welcome to {server}! 👋 A few quick questions so we can set you up.",
   questions: ["What’s your TikTok handle?", "What kind of content do you usually make?", "How many videos can you post a week?", "What’s the best way for our team to reach you? (WhatsApp or email)"],
+  done: "Thanks, that’s everything. You’re all set! 🚀",
+  notifyDone: true,
+  doneRole: "",
   ...(store.get(ns, "onboarding/" + gid) || {}),
 });
 
@@ -386,6 +389,44 @@ const HANDLERS = {
     } catch (e) {
       throw fail(e.code === 50007 ? "This member doesn’t accept DMs from the bot." : e.message, 409, "dm_failed");
     }
+  },
+
+  /** Link (or unlink) a member's TikTok handle by hand: fixes a wrong answer, or links someone who skipped it. */
+  async dm_link(ns, { userId, tiktok }) {
+    const g = ownGuild(ns);
+    const t = /^\d+$/.test(userId || "") && store.get(ns, "dms/" + userId);
+    if (!t || t.guild !== g.guildId) throw fail("Unknown conversation.", 404);
+    const h = String(tiktok || "").trim().replace(/^@/, "").replace(/^.*tiktok\.com\/@/i, "").replace(/[/?#].*$/, "").toLowerCase();
+    if (h && !/^[a-z0-9._]{2,24}$/.test(h)) throw fail("That isn’t a TikTok handle. Use letters, numbers, dots and underscores, like @mia.beauty.");
+    const taken = h && store.list(ns, "dms", (x) => x.guild === g.guildId && x.tiktok === h && x.userId !== userId)[0];
+    if (taken) throw fail(`@${h} is already linked to ${taken.name}. Unlink it there first.`, 409, "taken");
+    store.set(ns, "dms/" + userId, { ...t, tiktok: h, linkedBy: "team" });
+    return { tiktok: h };
+  },
+
+  /** Mark a conversation resolved (no reply needed) or reopen it. */
+  async dm_status(ns, { userId, status }) {
+    const g = ownGuild(ns);
+    const t = /^\d+$/.test(userId || "") && store.get(ns, "dms/" + userId);
+    if (!t || t.guild !== g.guildId) throw fail("Unknown conversation.", 404);
+    if (!["done", "needs"].includes(status)) throw fail("Unknown status.");
+    if (t.status === "progress" || t.status === "closed") throw fail("This member is still onboarding.");
+    store.set(ns, "dms/" + userId, { ...t, status, unread: false });
+  },
+
+  /** Welcome every member who joined before the bot was listening (at most 100 per run). */
+  async welcome_all(ns) {
+    const g = ownGuild(ns);
+    const { startOnboarding } = await import("./bot.js");
+    const todo = (store.get(ns, "members/" + g.guildId)?.list || []).filter((m) => !m.bot && !m.left && !store.get(ns, "dms/" + m.id)).slice(0, 100);
+    let sent = 0, failed = 0;
+    for (const m of todo) {
+      await startOnboarding(ns, g, m);
+      if (store.get(ns, "dms/" + m.id)?.status === "closed") failed++;
+      else sent++;
+      await new Promise((r) => setTimeout(r, 1200)); // stay well under Discord's DM rate limits
+    }
+    return { sent, failed, left: Math.max(0, (store.get(ns, "members/" + g.guildId)?.list || []).filter((m) => !m.bot && !m.left && !store.get(ns, "dms/" + m.id)).length) };
   },
 
   async dm_read(ns, { userId }) {

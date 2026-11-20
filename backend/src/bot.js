@@ -13,11 +13,22 @@ const now = () => new Date().toISOString();
 const PHONE_RE = /(\+?\d[\d\s().-]{7,}\d)/;
 const first = (name) => String(name || "there").trim().split(/\s+/)[0];
 
-/** The TikTok handle in a reply: the @name if there is one, otherwise the last word ("it's mia.beauty"). */
-function handleIn(text) {
-  const raw = text.match(/@([a-z0-9._]{2,24})/i)?.[1] || text.match(/tiktok\.com\/@?([a-z0-9._]{2,24})/i)?.[1] || text.trim().split(/\s+/).pop() || "";
-  const h = raw.replace(/^@/, "").replace(/[^a-z0-9._]/gi, "").replace(/\.+$/, "").toLowerCase();
-  return h.length >= 2 ? h : "";
+/**
+ * The TikTok handle in a reply, or "" when the reply doesn't contain one: an @name, a tiktok.com link,
+ * or a reply that is just a handle ("mia.beauty"). "I don't have one yet" is not a handle.
+ */
+// Replies that mean "I don't have a TikTok", not a handle.
+const NO_HANDLE = /^(none|no|nope|nah|na|n\/a|idk|nothing|not yet|no tiktok|i don.?t have (one|it|a tiktok)( yet)?|dont have( one)?|skip|later|-)[.!]?$/i;
+
+export function handleIn(text) {
+  if (NO_HANDLE.test(String(text || "").trim())) return "";
+  const t = String(text || "").trim();
+  if (/^(yes|yeah|yep|ok|okay|sure|hi|hey|hello|thanks|thank you|ty)[.!]*$/i.test(t)) return "";
+  const raw = t.match(/tiktok\.com\/@([a-z0-9._]{2,24})/i)?.[1] || t.match(/(?:^|\s)@([a-z0-9._]{2,24})/i)?.[1]
+    || t.match(/(?:handle|tiktok|user ?name)\s*(?:is|:|=|-)\s*@?([a-z0-9._]{2,24})/i)?.[1]
+    || (/^@?[a-z0-9._]{2,24}[.!]?$/i.test(t) ? t : "");
+  const h = raw.replace(/^@/, "").replace(/[!]$/, "").replace(/\.+$/, "").toLowerCase();
+  return /^[a-z0-9._]{2,24}$/.test(h) && /[a-z]/.test(h) ? h : "";
 }
 
 /* ---------- which account a server belongs to ---------- */
@@ -198,19 +209,31 @@ async function onDm(d) {
   if (phone) t.wa = phone[1].trim();
 
   let reply = "";
+  let finished = false;
   if (t.status === "progress" || t.status === "closed") {
     const q = ob.questions[t.step];
-    if (q) {
-      t.answers = { ...t.answers, [q]: text };
-      if (/tiktok|handle/i.test(q)) t.tiktok = handleIn(text);
-    }
-    t.step++;
-    if (t.step < ob.questions.length) {
+    const asksHandle = q && /tiktok|handle/i.test(q);
+    const handle = asksHandle ? handleIn(text) : "";
+    if (asksHandle && !handle && !t.handleAsked && !NO_HANDLE.test(text.trim())) {
+      // Ask once more for just the handle; on a second miss we move on (it can be linked by hand later).
+      t.handleAsked = true;
       t.status = "progress";
-      reply = ob.questions[t.step];
+      reply = "Could you send just your TikTok handle? Like @yourname 🙂 If you don’t have one yet, reply “none”.";
     } else {
-      t.status = "done";
-      reply = phone ? "Got it, saved. You’re all set! 🚀" : "Thanks, that’s everything. You’re all set! 🚀";
+      if (q) {
+        t.answers = { ...t.answers, [q]: text };
+        if (asksHandle) t.tiktok = handle;
+      }
+      t.step++;
+      if (t.step < ob.questions.length) {
+        t.status = "progress";
+        reply = ob.questions[t.step];
+      } else {
+        t.status = "done";
+        t.doneAt = now();
+        finished = true;
+        reply = fill(ob.done || "Thanks, that’s everything. You’re all set! 🚀", { name: t.name }, g || { guildName: "the server" });
+      }
     }
   } else {
     // Onboarding is over, so this is a question for the team.
@@ -230,6 +253,23 @@ async function onDm(d) {
     }
   }
   store.set(ns, "dms/" + t.userId, t);
+  if (finished && g) await onboardingDone(ns, g, t, ob);
+}
+
+/** After the last answer: give the "onboarded" role and tell the mods. Never throws. */
+async function onboardingDone(ns, g, t, ob) {
+  if (ob.doneRole && g.roleNames?.[ob.doneRole]) {
+    try {
+      await discord.addRole(g.guildId, t.userId, ob.doneRole);
+    } catch (e) {
+      console.error("[onboarding] role", e.message);
+      store.set(ns, "dms/" + t.userId, { ...store.get(ns, "dms/" + t.userId), roleError: e.status === 403 ? `The bot couldn’t give the ${g.roleNames[ob.doneRole]} role. Give it Manage Roles and move it above that role.` : e.message });
+    }
+  }
+  if (ob.notifyDone !== false) {
+    const answers = ob.questions.filter((q) => t.answers?.[q]).map((q) => `• ${q} ${String(t.answers[q]).slice(0, 120)}`).join("\n");
+    await tellMods(ns, g.guildId, `🎉 **${t.name}** finished onboarding${t.tiktok ? ` · TikTok @${t.tiktok}` : " · no TikTok handle linked"}\n${answers}`);
+  }
 }
 
 /** One friendly nudge to members who haven't answered the welcome DM. Called by the scheduler. */
@@ -238,9 +278,15 @@ export async function sendReminders() {
     if (!ws.guildId || !ws.done || cfgOf(ns, ws.guildId).reminders === false) continue;
     const hours = autosOf(ns, ws.guildId).onboarding?.reminderHours || 24;
     const cutoff = new Date(Date.now() - hours * 36e5).toISOString();
+    const ob = obOf(ns, ws.guildId);
     for (const t of store.list(ns, "dms", (x) => x.guild === ws.guildId && x.status === "progress" && !x.reminded && x.updatedAt < cutoff)) {
-      if (t.msgs.some((m) => m.from === "c") || !t.channelId) continue;
-      const text = `Just checking in, ${first(t.name)}. Reply whenever you’re ready. 🙂`;
+      // Waiting on the creator: the bot spoke last (no reply at all, or they stopped halfway).
+      if (!t.channelId || t.msgs[t.msgs.length - 1]?.from !== "bot") continue;
+      const started = t.msgs.some((m) => m.from === "c");
+      const q = ob.questions[t.step];
+      const text = started && q
+        ? `Just checking in, ${first(t.name)}. Only ${ob.questions.length - t.step} quick question${ob.questions.length - t.step === 1 ? "" : "s"} left: ${q}`
+        : `Just checking in, ${first(t.name)}. Reply whenever you’re ready. 🙂`;
       const { id, ...doc } = t;
       try {
         await discord.send(t.channelId, text);

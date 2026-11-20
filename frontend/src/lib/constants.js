@@ -132,6 +132,9 @@ export const defaultOb = () => ({
     "What’s the best way for our team to reach you? (WhatsApp or email)",
   ],
   welcome: "Hey {first_name}, welcome to {server}! 👋 A few quick questions so we can set you up.",
+  done: "Thanks, that’s everything. You’re all set! 🚀",
+  notifyDone: true,
+  doneRole: "",
 });
 
 export const defaultScoring = () => ({

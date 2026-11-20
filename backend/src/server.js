@@ -27,7 +27,7 @@ const MAX_BODY = 1024 * 1024;
 // Collections the browser may write. Everything else (discord, requests, activity…) is written by the server.
 const WRITABLE = ["workspace", "config", "automations", "allowlist", "scoring", "onboarding", "drafts", "custom"];
 // What each role may do besides reading. Viewers only read.
-const MOD_JOBS = ["post", "reject", "test", "dm", "dm_read", "draft"];
+const MOD_JOBS = ["post", "reject", "test", "dm", "dm_read", "draft", "dm_link", "dm_status", "welcome"];
 const PATH_RE = /^([a-z_]+)\/([A-Za-z0-9_.-]{1,80})$/;
 
 const fail = (status, message, code = "bad_request", field) => Object.assign(new Error(message), { status, code, ...(field ? { field } : {}) });
