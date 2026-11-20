@@ -12,6 +12,8 @@ export const AUTO_NAMES = {
   winning_content: "Winning angle of the week",
   wins: "Creator wins",
   leaderboard: "Weekly leaderboard",
+  tiers: "Creator tiers",
+  samples: "Sample follow-ups",
 };
 
 const sym = (shop) => (shop.region === "uk" ? "£" : "$");

@@ -9,6 +9,8 @@ import { discord } from "./discord.js";
 import { AUTO_NAMES, BUILD } from "./drafts.js";
 import { crmFor, crmSource, shopFor } from "./crm.js";
 import { addDays, todayUTC, ymd } from "./dates.js";
+import * as tiers from "./tiers.js";
+import * as samples from "./samples.js";
 
 const now = () => new Date().toISOString();
 const fail = (message, status = 400, code = "bad_request") => Object.assign(new Error(message), { status, code });
@@ -64,6 +66,9 @@ async function refreshGuild(ns, guildId, withMembers) {
   return g;
 }
 
+/** Text for the mods' channel: user mentions shown as text so nobody is pinged by a review. */
+const quietText = (t) => String(t || "").replace(/<@[!&]?\w+>/g, "@member").replace(/@(here|everyone)/g, "@\u200b$1");
+
 /** Post a draft's messages to a channel, uploading its generated card images. Returns the last message. */
 async function sendMessages(channelId, messages, { quiet } = {}) {
   let last = null;
@@ -72,7 +77,7 @@ async function sendMessages(channelId, messages, { quiet } = {}) {
     const files = (m.images || []).map((u) => /^\/api\/media\/([A-Za-z0-9_-]+)\.png$/.exec(u)).filter(Boolean)
       .map((x, i) => ({ name: `card-${i + 1}.png`, data: store.media(x[1])?.data })).filter((f) => f.data);
     // Tests go to the mods: @here/@everyone are defused there.
-    const text = quiet ? (m.text || "").replace(/@(here|everyone)/g, "@\u200b$1") : m.text || "";
+    const text = quiet ? quietText(m.text) : m.text || "";
     if (files.length && text.length <= 2000) last = (await discord.sendFiles(channelId, files, text)) || last;
     else {
       if (text.trim()) last = (await discord.send(channelId, text)) || last;
@@ -89,13 +94,28 @@ async function announceDraft(ns, g, id) {
   const d = store.get(ns, "drafts/" + id);
   const cfg = cfgOf(ns, g.guildId);
   if (!d || !cfg.modChannel || cfg.notifyDraft === false) return;
-  const where = d.channel === "dm" ? "a DM to each creator" : `<#${d.channel}>`;
+  const where = d.channel === "dm" ? "a DM to each creator" : d.channel ? `<#${d.channel}>` : "no channel (role changes only)";
   // The full post as the channel will get it (cards included), then the approve/reject prompt.
   let msg = null;
   try {
-    await discord.send(cfg.modChannel, `📝 **${d.name}** is ready for review. Here’s exactly what will go to ${where}:`);
-    await sendMessages(cfg.modChannel, d.messages?.length ? d.messages : [{ text: d.text }], { quiet: true });
-    msg = await discord.send(cfg.modChannel, `👆 **${d.name}** → ${where}\nReact ✅ to approve and post it, ❌ to reject. You can edit it first in the dashboard under Approvals.`);
+    if (d.action?.type === "nudges") {
+      const n = d.action.nudges.length;
+      await discord.send(cfg.modChannel, `📦 **${d.name}**: ${n} creator${n === 1 ? "" : "s"} to nudge about their sample:\n${quietText(d.summary)}`);
+      await discord.send(cfg.modChannel, `The DM${d.messages.length > 1 ? "s" : ""} (names, products and dates are filled in per creator):`);
+      await sendMessages(cfg.modChannel, d.messages, { quiet: true });
+      msg = await discord.send(cfg.modChannel, `👆 **${d.name}**\nReact ✅ to send the DMs, ❌ to reject. You can edit the wording first in the dashboard under Approvals.`);
+    } else if (d.action?.type === "tiers") {
+      await discord.send(cfg.modChannel, `🎖️ **${d.name}**: ${d.action.changes.length} role change${d.action.changes.length === 1 ? "" : "s"} to approve:\n${quietText(d.summary)}`);
+      if (d.messages?.length) {
+        await discord.send(cfg.modChannel, `Announcement for ${where}:`);
+        await sendMessages(cfg.modChannel, d.messages, { quiet: true });
+      }
+      msg = await discord.send(cfg.modChannel, `👆 **${d.name}**\nReact ✅ to apply the roles${d.messages?.length ? " and post the announcement" : ""}, ❌ to reject. You can edit the announcement first in the dashboard under Approvals.`);
+    } else {
+      await discord.send(cfg.modChannel, `📝 **${d.name}** is ready for review. Here’s exactly what will go to ${where}:`);
+      await sendMessages(cfg.modChannel, d.messages?.length ? d.messages : [{ text: d.text }], { quiet: true });
+      msg = await discord.send(cfg.modChannel, `👆 **${d.name}** → ${where}\nReact ✅ to approve and post it, ❌ to reject. You can edit it first in the dashboard under Approvals.`);
+    }
   } catch (e) {
     console.error("[review]", e.message);
   }
@@ -165,8 +185,30 @@ const HANDLERS = {
     rank = Number.isInteger(rank) && rank >= 1 && rank <= 10 ? rank : null;
     const g = ownGuild(ns);
     const cfg = cfgOf(ns, g.guildId);
-    let name, messages, channel, auto;
-    if (custom) {
+    let name, messages, channel, auto, extra = {};
+    if (automation === "tiers") {
+      const shop = await shopFor(ns, workspace(ns).shopId);
+      if (!shop) throw fail("No shop found in your CRM.");
+      const p = await tiers.plan(ns, g, autosOf(ns, g.guildId).tiers, { crm: crmFor(ns), shop });
+      if (!p.changes.length) return { draftId: null, nothing: p.rows.length ? `All ${p.rows.length} linked creators are already in the right tier.` : "No creators are linked yet. Creators are linked when they give their TikTok handle in the onboarding DM." };
+      const t = tiers.draftFor(p, g, shop);
+      [name, messages, channel, auto] = [AUTO_NAMES.tiers, t.messages, t.channel, "tiers"];
+      extra = { summary: t.summary, action: t.action };
+      if (test) test = false; // role changes are never "tested" into the mods' channel; the review there shows them
+    } else if (automation === "samples") {
+      const shop = await shopFor(ns, workspace(ns).shopId);
+      if (!shop) throw fail("No shop found in your CRM.");
+      const p = await samples.plan(ns, g, autosOf(ns, g.guildId).samples, { crm: crmFor(ns), shop });
+      if (!p.nudges.length) {
+        return { draftId: null, nothing: p.pending
+          ? `No one to nudge right now. ${p.pending} sample${p.pending === 1 ? " is" : "s are"} waiting on a video${p.unlinked ? `. ${p.unlinked} creator${p.unlinked === 1 ? " is" : "s are"} due a nudge but not linked to a Discord member yet` : ", and they were nudged already or arrived too recently"}.`
+          : "Every delivered sample has a video. Nothing to follow up on." };
+      }
+      const t = samples.draftFor(p);
+      [name, messages, channel, auto] = [AUTO_NAMES.samples, t.messages, "dm", "samples"];
+      extra = { summary: t.summary, action: t.action };
+      if (test) test = false;
+    } else if (custom) {
       const c = ID_RE.test(custom) && store.get(ns, "custom/" + custom);
       if (!c) throw fail("Unknown automation.", 404);
       const ping = c.channel === "dm" || !c.mention || c.mention === "none" ? "" : c.mention + " ";
@@ -184,7 +226,7 @@ const HANDLERS = {
       guild: g.guildId, automation: auto, name,
       channel: target || "", channelName: target === "dm" ? "Direct message" : g.channels.find((c) => c.id === target)?.name || "",
       test: !!test, source: source || (test ? "test" : "schedule"), replaces: ID_RE.test(replaces || "") ? replaces : null,
-      messages, text: messages.map((m) => m.text).join("\n\n"),
+      messages, text: messages.map((m) => m.text).join("\n\n"), ...extra,
       status: "pending", createdAt: now(), history: [{ at: now(), what: "Draft built" }],
     });
     if (ID_RE.test(replaces || "") && store.get(ns, "drafts/" + replaces)?.status === "pending") store.update(ns, "drafts/" + replaces, { status: "replaced" });
@@ -207,6 +249,39 @@ const HANDLERS = {
     const messages = d.messages?.length ? d.messages : [{ text: d.text }];
     const who = String(by || "You").slice(0, 80);
     store.update(ns, path, { status: "posting" });
+
+    if (d.action?.type === "nudges") {
+      const r = await samples.apply(ns, g, d.action, d.action.templates.map((_, i) => d.messages?.[i]?.text));
+      if (!r.sent) return back(r.failed ? "None of the DMs could be delivered. These creators may have closed their DMs." : "Nobody to DM.");
+      const did = `Sent ${r.sent} sample follow-up${r.sent === 1 ? "" : "s"} by DM${r.failed ? `, ${r.failed} couldn’t be delivered` : ""}`;
+      store.update(ns, path, { status: "posted", error: null, by: who, postedAt: now(), history: hist(did) });
+      if (d.modMessageId) await tellMods(ns, g.guildId, `✅ Approved by ${who}. ${did}.`, { replyTo: d.modMessageId });
+      return { posted: true, sent: r.sent, failed: r.failed };
+    }
+
+    if (d.action?.type === "tiers") {
+      let r;
+      try {
+        r = await tiers.apply(ns, g, d.action);
+      } catch (e) {
+        return back(e.message);
+      }
+      const did = `Moved ${r.moved} creator${r.moved === 1 ? "" : "s"} to their new tier${r.failed ? `, ${r.failed} failed` : ""}`;
+      let messageUrl = null, note = "";
+      const ch = d.channel && d.messages?.length && g.channels.find((c) => c.id === d.channel);
+      if (ch) {
+        try {
+          const last = await sendMessages(ch.id, d.messages);
+          messageUrl = last ? `https://discord.com/channels/${g.guildId}/${ch.id}/${last.id}` : null;
+          note = `; announced in #${ch.name}`;
+        } catch (e) {
+          note = `; the announcement couldn’t be posted in #${ch.name}`;
+        }
+      }
+      store.update(ns, path, { status: "posted", error: r.failed ? r.errors.join("\n") : null, by: who, postedAt: now(), messageUrl, history: hist(did + note) });
+      if (d.modMessageId) await tellMods(ns, g.guildId, `✅ Applied by ${who}. ${did}${note}.${r.failed ? "\n" + r.errors.slice(0, 5).join("\n") : ""}`, { replyTo: d.modMessageId });
+      return { posted: true, moved: r.moved, failed: r.failed };
+    }
 
     if (d.channel === "dm") {
       // One DM per member the bot already has a thread with; {first_name} is filled per person.
@@ -264,6 +339,35 @@ const HANDLERS = {
     } catch (e) {
       throw fail(e.status === 403 ? "The bot can’t post in your approvals channel. Give it View Channel, Send Messages and Attach Files there." : e.message, 403, "missing_permission");
     }
+  },
+
+  /** Creator tiers with the given (unsaved) settings: who's in each tier and who would move. Changes nothing. */
+  async tiers_preview(ns, { settings }) {
+    const g = ownGuild(ns);
+    const shop = await shopFor(ns, workspace(ns).shopId);
+    if (!shop) throw fail("No shop found in your CRM.");
+    const p = await tiers.plan(ns, g, settings || autosOf(ns, g.guildId).tiers, { crm: crmFor(ns), shop });
+    const count = Object.fromEntries(p.settings.tiers.map((t) => [t.id, 0]));
+    for (const r of p.rows) if (r.target) count[r.target]++;
+    const fresh = await discord.guild(g.guildId).catch(() => g);
+    return {
+      from: p.from, to: p.to, linked: p.rows.length, unlinked: p.unlinked, count,
+      changes: p.changes.slice(0, 50), near: p.near, source: crmSource(ns),
+      canManageRoles: fresh.canManageRoles ?? null, state: store.get(ns, "tierstate/" + g.guildId),
+    };
+  },
+
+  /** Sample follow-ups with the given (unsaved) settings: who would be nudged now, and how earlier nudges did. */
+  async samples_preview(ns, { settings }) {
+    const g = ownGuild(ns);
+    const shop = await shopFor(ns, workspace(ns).shopId);
+    if (!shop) throw fail("No shop found in your CRM.");
+    const p = await samples.plan(ns, g, settings || autosOf(ns, g.guildId).samples, { crm: crmFor(ns), shop });
+    const first = p.nudges.find((c) => c.n === 1), second = p.nudges.find((c) => c.n === 2);
+    return {
+      pending: p.pending, unlinked: p.unlinked, nudges: p.nudges.slice(0, 50), total: p.nudges.length, stats: p.stats, source: crmSource(ns),
+      examples: { first: first ? samples.fill(p.settings.text, first) : null, second: second ? samples.fill(p.settings.text2, second) : null },
+    };
   },
 
   /** Reply to a creator's DM as the bot. */
@@ -330,7 +434,8 @@ export function startJob(ns, type, payload = {}) {
 }
 
 /* ---------- schedule: runs each automation at its day and time, in the workspace's time zone ---------- */
-const SCHEDULED = { viral_hooks: true, winning_content: true, leaderboard: true, wins: "daily" };
+const SCHEDULED = { viral_hooks: true, winning_content: true, leaderboard: true, wins: "daily", tiers: "daily", samples: "daily" };
+const NO_CHANNEL_OK = new Set(["tiers", "samples"]); // tiers can change roles without announcing anything
 const clocks = new Map();
 function clockIn(zone) {
   if (!clocks.has(zone)) {
@@ -377,12 +482,12 @@ async function tick() {
     };
     const run = async (payload, approve) => {
       const built = await startJob(ns, "draft", { ...payload, source: "schedule" }).done;
-      if (built.status === "done" && !approve) await startJob(ns, "post", { draftId: built.result.draftId, by: "Schedule" }).done;
+      if (built.status === "done" && built.result.draftId && !approve) await startJob(ns, "post", { draftId: built.result.draftId, by: "Schedule" }).done;
     };
     const items = autosOf(ns, gid);
     for (const [key, kind] of Object.entries(SCHEDULED)) {
       const s = items[key];
-      if (!s?.enabled || !s.channel || s.time !== time) continue;
+      if (!s?.enabled || (!s.channel && !NO_CHANNEL_OK.has(key)) || s.time !== time) continue;
       if (kind !== "daily" && !(s.days || []).includes(weekday)) continue;
       if (claim(key)) await run({ automation: key }, s.mode !== "auto");
     }

@@ -15,6 +15,19 @@ export const TABS = {
 export const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 export const MENTIONS = [["@here", "@here"], ["@everyone", "@everyone"], ["none", "No mention"]];
 
+export const SAMPLE_TEXT = "Hey {first_name}! 👋 Your {product} sample arrived {days} days ago. Got a video planned? Reply here if you need ideas or anything else, we’re happy to help 🙌";
+export const SAMPLE_TEXT2 = "Hey {first_name}, quick reminder about your {product} sample 📦 Your video was due {due_date}. Even a simple 20-second demo works. Reply here if you’re stuck and we’ll help!";
+
+/** Starting tiers by GMV over the window. Ids are stable so renaming a tier renames its Discord role. */
+export function defaultTiers() {
+  return [
+    { id: "bronze", name: "Bronze", emoji: "🥉", color: "#cd7f32", min: 0 },
+    { id: "silver", name: "Silver", emoji: "🥈", color: "#a8a9ad", min: 500 },
+    { id: "gold", name: "Gold", emoji: "🥇", color: "#f1c40f", min: 2000 },
+    { id: "diamond", name: "Diamond", emoji: "💎", color: "#5dade2", min: 10000 },
+  ];
+}
+
 export const AUTOS = [
   {
     key: "general_chat", n: "01", name: "General chat manager", live: true,
@@ -46,11 +59,25 @@ export const AUTOS = [
     what: "DMs each new member your questions, links their TikTok and saves the answers.", hint: ["welcome", "introductions"],
     defaults: { reminderHours: 24 },
   },
+  {
+    key: "tiers", n: "07", name: "Creator tiers",
+    what: "Gives each linked creator a Discord role for their GMV level (Bronze, Silver, Gold, Diamond) and moves them as their sales change.",
+    hint: [], // never switched on by itself: it creates and assigns roles
+    defaults: { mode: "manual", days: WEEKDAYS, time: "10:00", window: 30, demote: true, dm: true, tiers: defaultTiers() },
+  },
+  {
+    key: "samples", n: "08", name: "Sample follow-ups",
+    what: "DMs creators who received a free sample but haven’t posted a video for it yet, with a second reminder if they still haven’t.",
+    hint: [], // never switched on by itself: it DMs creators
+    defaults: { mode: "manual", days: WEEKDAYS, time: "11:00", after: 5, second: true, secondAfter: 12, text: SAMPLE_TEXT, text2: SAMPLE_TEXT2 },
+  },
 ];
 export const autoByKey = (k) => AUTOS.find((a) => a.key === k);
 
 /** Automations that build a draft on a schedule (the others react to Discord as it happens). */
-export const BUILDABLE = ["viral_hooks", "winning_content", "wins", "leaderboard"];
+export const BUILDABLE = ["viral_hooks", "winning_content", "wins", "leaderboard", "tiers", "samples"];
+/** Automations that can run without a channel (tiers change roles; announcing is optional). */
+export const NO_CHANNEL_OK = ["tiers", "samples"];
 
 export const COMM_TABS = [
   ["overview", "Overview"],
@@ -140,5 +167,6 @@ export const timeText = t12;
 export function scheduleText(a, s) {
   if (a.key === "general_chat") return "Always on";
   if (a.key === "onboarding") return "When someone joins";
+  if (a.key === "tiers" || a.key === "samples") return "Daily · " + t12(s.time);
   return daysTimeText(s.days, s.time);
 }

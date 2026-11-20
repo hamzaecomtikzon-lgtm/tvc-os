@@ -6,7 +6,7 @@
 const API = process.env.DISCORD_API_BASE || "https://discord.com/api/v10"; // overridable for tests
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const PERM = { ADMIN: 1n << 3n, MANAGE_CHANNELS: 1n << 4n, VIEW: 1n << 10n, SEND: 1n << 11n };
+const PERM = { ADMIN: 1n << 3n, MANAGE_CHANNELS: 1n << 4n, VIEW: 1n << 10n, SEND: 1n << 11n, MANAGE_ROLES: 1n << 28n };
 // view, send, embed, attach, react, mention everyone, manage channels, manage roles, history, change nickname
 const INVITE_PERMISSIONS = "335793232";
 const TEXT_TYPES = [0, 5]; // text, announcement
@@ -124,6 +124,9 @@ export const discord = {
       roleNames: Object.fromEntries(g.roles.filter((r) => r.id !== g.id).map((r) => [r.id, r.name])),
       roles: g.roles.filter((r) => r.id !== g.id && !r.managed).sort((a, b) => b.position - a.position).map((r) => r.name),
       canManageChannels: Boolean(base & PERM.MANAGE_CHANNELS),
+      canManageRoles: Boolean(base & PERM.MANAGE_ROLES),
+      // The bot can only give out roles below its own highest role.
+      botRolePosition: Math.max(0, ...member.roles.map((id) => g.roles.find((r) => r.id === id)?.position ?? 0)),
       syncedAt: new Date().toISOString(),
     };
   },
@@ -239,6 +242,32 @@ export const discord = {
     }
     return out;
   },
+
+  /* ---------- roles (creator tiers) ---------- */
+
+  /** Every role in a server: `[{ id, name, color, position, managed }]`. */
+  async roles(guildId) {
+    return (await call("GET", `/guilds/${guildId}/roles`)).map((r) => ({ id: r.id, name: r.name, color: r.color, position: r.position, managed: r.managed }));
+  },
+  /** Create a role (it lands at the bottom, under the bot's own role). `color` is "#rrggbb". */
+  async createRole(guildId, { name, color, hoist = true }) {
+    const r = await call("POST", `/guilds/${guildId}/roles`, { name: String(name).slice(0, 100), color: parseInt(String(color || "#99aab5").slice(1), 16) || 0, hoist, mentionable: false, permissions: "0" });
+    return { id: r.id, name: r.name, position: r.position };
+  },
+  async editRole(guildId, roleId, { name, color }) {
+    return call("PATCH", `/guilds/${guildId}/roles/${roleId}`, { name: String(name).slice(0, 100), color: parseInt(String(color || "#99aab5").slice(1), 16) || 0 });
+  },
+  /** One member's role ids, or null when they're no longer in the server. */
+  async memberRoles(guildId, userId) {
+    try {
+      return (await call("GET", `/guilds/${guildId}/members/${userId}`)).roles || [];
+    } catch (e) {
+      if (e.status === 404) return null;
+      throw e;
+    }
+  },
+  addRole: (guildId, userId, roleId) => call("PUT", `/guilds/${guildId}/members/${userId}/roles/${roleId}`),
+  removeRole: (guildId, userId, roleId) => call("DELETE", `/guilds/${guildId}/members/${userId}/roles/${roleId}`),
 
   /** Which privileged gateway intents the application has switched on. */
   async intents() {

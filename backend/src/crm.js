@@ -148,6 +148,29 @@ const sample = {
     return Object.values(by).map((p) => ({ ...p, gmv: Math.round(p.gmv * 100) / 100 })).sort((a, b) => b.gmv - a.gmv);
   },
 
+  /**
+   * Sample requests in the given states (Cruva's names: "Content Pending" = delivered, no video yet;
+   * "Overdue" = past the content due date; "Posted"). Sample data: one request per few creators.
+   */
+  listSamples({ shop_id, statuses = ["Content Pending", "Overdue"] }) {
+    shopOrThrow(shop_id);
+    const products = [...new Set(videoPool(shop_id).map((v) => v.product))].slice(0, 4);
+    const out = [];
+    HANDLES.forEach((handle, i) => {
+      if (i % 3) return;
+      const ago = 2 + (hash(handle + "s") % 20); // delivered 2 to 21 days ago
+      const posted = hash(handle + "p") % 4 === 0;
+      const status = posted ? "Posted" : ago > 14 ? "Overdue" : "Content Pending";
+      if (!statuses.includes(status)) return;
+      const received = addDays(todayUTC(), -ago);
+      out.push({
+        applyId: "s" + hash(handle + shop_id), handle, product: products[i % products.length] || "Sample product", productId: "p" + (i % 4), status,
+        requestedAt: ymd(addDays(received, -6)), receivedAt: ymd(received), dueDate: ymd(addDays(received, 14)), postedAt: posted ? ymd(addDays(received, 5)) : null,
+      });
+    });
+    return out;
+  },
+
   listDiscordMembers({ shop_id, page = 1, page_size = 100 }) {
     shopOrThrow(shop_id);
     const all = MEMBERS.map(({ id, user, display, tiktok, linked, roles, joined }) => ({ id, user, display, tiktok, linked, roles: roles.length, joined }));
@@ -161,6 +184,19 @@ const sample = {
     };
   },
 };
+
+/**
+ * A short name for a sampled product, for messages: the SKU when it names a product ("Scalp Spray"),
+ * otherwise the listing title up to its first separator ("Psoriasis Scalp Spray - 3% Salicylic…" → "Psoriasis Scalp Spray").
+ */
+export function productLabel(title, sku) {
+  const v = String(sku || "").trim();
+  if (v && !/\d|\||^default$/i.test(v) && v.split(/\s+/).length <= 4) return v;
+  const head = String(title || "").split(/\s[|–—-]\s|,|\|/)[0].trim();
+  if (!head) return "your sample";
+  if (head.length <= 60) return head;
+  return head.slice(0, 60).replace(/\s+\S*$/, "");
+}
 
 /* ---------------------------------------------------------------- Cruva (live) */
 
@@ -369,6 +405,28 @@ function makeLive(apiKey) {
         body: { page_size: 100, page_number: 1, search_params: { date_range: { from: date_from, to: date_to }, sort_by: "total_gmv", sort_direction: "DESC" } },
       });
       return data.filter((p) => num(p.total_gmv) > 0).map((p) => ({ name: p.product_name, gmv: r2(p.total_gmv), orders: num(p.units_sold) }));
+    },
+
+    /** Sample requests in the given states, newest first (at most 1,000). `time_from` limits by request date. */
+    async listSamples({ shop_id, statuses = ["Content Pending", "Overdue"], time_from }) {
+      await liveShopOrThrow(shop_id);
+      const want = (Array.isArray(statuses) ? statuses : []).filter((x) => typeof x === "string" && x.length < 40).slice(0, 9);
+      const rows = await pages(async (n, size) => {
+        const j = await cruva("POST", "/affiliate/samples/list", {
+          shop: shop_id,
+          body: { page_size: size, page_number: n, sample_status: want, sort_by: "timestamp", sort_direction: "desc", ...(isDate(time_from) ? { time_from } : {}) },
+        });
+        return { rows: j.data?.results || [], more: j.data?.has_more };
+      });
+      const day = (s) => (s ? String(s).slice(0, 10) : null);
+      return rows.filter((x) => x.handle && !x.ignore).map((x) => ({
+        applyId: String(x.apply_id), handle: x.handle, product: productLabel(x.product_info?.product_name, x.sku_desc),
+        productId: x.product_info?.product_id || x.sampled_product || "", status: x.status,
+        requestedAt: day(x.timestamp), receivedAt: day(x.sample_received),
+        // No due date on some requests: TikTok's content window is about two weeks from delivery.
+        dueDate: day(x.expire_date) || (x.sample_received ? ymd(addDays(new Date(day(x.sample_received) + "T00:00:00Z"), 14)) : null),
+        postedAt: day(x.sample_posted),
+      }));
     },
 
     // Discord membership isn't CRM data; it stays on the sample until it's built from the bot's own member list.
