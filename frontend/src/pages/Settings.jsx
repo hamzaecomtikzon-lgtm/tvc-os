@@ -111,7 +111,7 @@ function BrandColors() {
 }
 
 function Bot() {
-  const { ws, guild, cfg, botName, botAvatar, channels, members, conn, discordInfo, saveWs, saveCfg, requestWait, checkDiscord, toast, user, isAdmin } = useApp();
+  const { ws, guild, cfg, autos, botName, botAvatar, channels, members, conn, discordInfo, saveWs, saveCfg, saveAutos, requestWait, checkDiscord, toast, user, isAdmin } = useApp();
   const [name, setName] = useState(botName);
   const [busy, setBusy] = useState("");
   const [building, setBuilding] = useState(false);
@@ -136,7 +136,23 @@ function Bot() {
     setBuilding(false);
     if (!r.ok) return toast(r.error);
     await saveWs({ newChannels: [...(ws.newChannels || []), ...r.result.created] });
-    toast(r.result.created.length ? `${r.result.created.length} channels created in ${guild.guildName}. Point automations at them in Channels.` : "Those channels already exist. Nothing was created.");
+    // Point automations that have no channel yet at the channel the template made for them (any name, AI layouts included).
+    // Channels someone already picked are left alone.
+    const all = r.result.guild?.channels || [];
+    const made = (key) => { const want = todo.find((x) => x.auto === key); return want ? all.find((c) => baseName(c.name) === baseName(want.name))?.id : null; };
+    const nextAutos = { ...autos };
+    let wired = 0;
+    for (const a of AUTOS) {
+      const id = !autos[a.key]?.channel && made(a.key);
+      if (id) { nextAutos[a.key] = { ...autos[a.key], channel: id }; wired++; }
+    }
+    const modId = !cfg.modChannel && made("mod");
+    const nextCfg = modId ? { ...cfg, modChannel: modId } : cfg;
+    if (modId) wired++;
+    if (wired && (!modId || (await saveCfg(nextCfg, { sync: false })))) await saveAutos(nextAutos, nextCfg);
+    const n = r.result.created.length;
+    toast(!n ? "Those channels already exist. Nothing was created."
+      : `${n} channels created in ${guild.guildName}.${wired ? ` ${wired} automation${wired === 1 ? " now posts" : "s now post"} in ${wired === 1 ? "its" : "their"} new channel.` : " Point automations at them in Channels."}`);
   };
   const g = conn.gateway;
   const checks = [

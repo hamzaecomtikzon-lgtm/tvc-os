@@ -34,6 +34,34 @@ const VIRAL_SCHEMA = obj({
   on_brief: { type: "array", items: str },
 });
 
+/** Keep an AI-designed server layout inside what the builder and Discord accept. `autos` are the automation slots it may use. */
+export function tidyCommunity(out, autos) {
+  const used = new Set();
+  const seen = new Set();
+  const clean = (n) => String(n || "").toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9\-_]/g, "").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
+  let cats = (out.cats || []).filter((c) => !/MODERATOR/i.test(c.cat)).slice(0, 7).map((c) => ({
+    cat: String(c.cat).slice(0, 40), about: String(c.about || "").slice(0, 160), priv: false,
+    ch: (c.ch || []).map((x) => {
+      const name = clean(x.name);
+      if (!name || seen.has(name) || name === "moderator-only") return null;
+      seen.add(name);
+      const auto = x.auto && x.auto !== "mod" && autos.includes(x.auto) && !used.has(x.auto) ? x.auto : "";
+      if (auto) used.add(auto);
+      return { e: [...String(x.e || "")].slice(0, 2).join(""), name, perm: x.perm === "read" ? "read" : "everyone", desc: String(x.desc || "").slice(0, 120), ...(auto ? { auto } : {}) };
+    }).filter(Boolean),
+  })).filter((c) => c.ch.length);
+  const modCat = (out.cats || []).find((c) => /MODERATOR/i.test(c.cat));
+  const modExtra = (modCat?.ch || []).map((x) => ({ name: clean(x.name), desc: String(x.desc || "").slice(0, 120) }))
+    .filter((x) => x.name && x.name !== "moderator-only" && !seen.has(x.name)).slice(0, 3)
+    .map((x) => ({ e: "", name: x.name, perm: "mods", desc: x.desc }));
+  // Discord channel creation is capped at 40 per run, moderators included.
+  let room = 40 - 1 - modExtra.length;
+  cats = cats.map((c) => { const keep = c.ch.slice(0, Math.max(0, room)); room -= keep.length; return { ...c, ch: keep }; }).filter((c) => c.ch.length);
+  if (!cats.length) return null;
+  cats.push({ cat: "🔒 MODERATORS", about: "Hidden from creators. Only your mods and the bot can see it.", priv: true, ch: [{ e: "", name: "moderator-only", perm: "mods", desc: "Every draft waits here for approval", auto: "mod" }, ...modExtra] });
+  return { name: String(out.name || "Custom layout").slice(0, 40), tagline: String(out.tagline || "").slice(0, 200), cats };
+}
+
 export const ai = {
   configured: () => Boolean(process.env.ANTHROPIC_API_KEY),
 
@@ -248,5 +276,55 @@ export const ai = {
     s.name = s.name.slice(0, 48) || spec.name;
     s.text = s.text.slice(0, 1900);
     return { reply: out.reply, spec: s };
+  },
+
+  /**
+   * Design a Discord server layout for a creator community from a plain description.
+   * Returns `{ name, tagline, cats: [{ cat, about, priv, ch: [{ e, name, perm, desc, auto }] }] }`,
+   * already checked: valid channel names and permissions, each automation used at most once,
+   * and a private moderators category holding the approvals channel. Null when the model declined.
+   */
+  async communityTemplate({ brand, description }) {
+    client ||= new Anthropic();
+    const AUTOS = {
+      onboarding: "welcome channel where the bot greets new members (read-only)",
+      general_chat: "main chat the bot answers in (everyone can chat)",
+      winning_content: "weekly breakdown of the top-selling videos (read-only)",
+      viral_hooks: "daily viral hooks from the niche (read-only)",
+      wins: "milestone cards when creators hit sales milestones (everyone can chat)",
+      leaderboard: "Monday top-5 creators by sales (read-only)",
+    };
+    const system = [
+      `You design Discord servers for ${brand || "a brand"}'s TikTok Shop creator community: affiliate creators who post videos and earn commission.`,
+      "Design a layout that fits the description: 3 to 6 categories plus a final private moderators category, 6 to 24 channels in total.",
+      "Category names are an emoji, a space, then UPPERCASE words (e.g. \"🎓 START HERE\"). Each category has a one-sentence `about`.",
+      "Channels: `e` is one emoji; `name` is lowercase words joined by hyphens, no emoji, max 30 characters; `perm` is \"everyone\" (creators can chat), \"read\" (announcement-style, bot and team post) or \"mods\" (only in the moderators category); `desc` is a short line saying what it's for.",
+      "Wire the bot's automations to channels with `auto`. Use each of these at most once, and use most of them unless the description says otherwise. Every other channel has auto \"\".\n" + Object.entries(AUTOS).map(([k, v]) => `- ${k}: ${v}`).join("\n"),
+      "The last category must be \"🔒 MODERATORS\" with priv true, starting with a channel named moderator-only, perm \"mods\", auto \"mod\" (where drafts wait for approval). All other categories have priv false.",
+      "`name` is a 2 to 4 word title for the layout, `tagline` one sentence on what makes it fit.",
+      "Write plain, concrete descriptions. Don't invent commission rates, prices or promises.",
+    ].join("\n\n");
+    const res = await client.beta.messages.create({
+      model: MODEL,
+      max_tokens: 6000,
+      betas: ["server-side-fallback-2026-07-01"],
+      fallbacks: "default",
+      output_config: {
+        effort: "low",
+        format: {
+          type: "json_schema",
+          schema: obj({
+            name: str, tagline: str,
+            cats: { type: "array", items: obj({ cat: str, about: str, priv: { type: "boolean" }, ch: { type: "array", items: obj({ e: str, name: str, perm: { type: "string", enum: ["everyone", "read", "mods"] }, desc: str, auto: { type: "string", enum: ["", "mod", ...Object.keys(AUTOS)] } }) } }) },
+          }),
+        },
+      },
+      system,
+      messages: [{ role: "user", content: `Describe the community:\n${description}` }],
+    });
+    if (res.stop_reason === "refusal") return null;
+    const out = JSON.parse(res.content.filter((b) => b.type === "text").map((b) => b.text).join(""));
+
+    return tidyCommunity(out, Object.keys(AUTOS));
   },
 };

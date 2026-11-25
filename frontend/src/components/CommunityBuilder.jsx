@@ -1,31 +1,57 @@
 import { useEffect, useRef, useState } from "react";
-import { MOD_CATEGORY, PERMS, TEMPLATE, baseName, cleanChannelName, slotName, templateLabel } from "../lib/setup.js";
+import { useApp } from "../context/app.js";
+import { api } from "../services/api.js";
+import { MOD_CATEGORY, PERMS, baseName, cleanChannelName, slotName, templateLabel } from "../lib/setup.js";
+import { TEMPLATES, automationCount, channelCount, suggestTemplate } from "../lib/communityTemplates.js";
 import { Icon } from "./site.jsx";
 
 /**
- * AI Community Builder: preview the creator-community template for a server,
- * rename or switch off channels, then create the missing ones.
+ * AI Community Builder. Step 1: pick one of the ready-made server layouts, or describe the
+ * community and have the AI design one. Step 2: preview it category by category, rename or
+ * switch off channels, then create the missing ones.
  * `onCreate(channels)` receives `[{ name, category, perm, auto }]` for the new channels.
  */
 export default function CommunityBuilder({ guild, brand, onCreate, onClose }) {
-  const [cats, setCats] = useState(() => {
-    const existing = new Set(guild.channels.map((c) => baseName(c.name)));
-    return TEMPLATE.map((c) => ({ ...c, ch: c.ch.map((x) => ({ ...x, on: true, exists: existing.has(x.name) })) }));
-  });
+  const { conn } = useApp();
+  const existing = new Set(guild.channels.map((c) => baseName(c.name)));
+  const [tpl, setTpl] = useState(null); // the chosen template, or an AI design
+  const [cats, setCats] = useState([]);
   const [prompt, setPrompt] = useState(`Creator community for ${brand || "our brand"}, a TikTok Shop brand. Creators post videos and earn commission.`);
+  const [designing, setDesigning] = useState(false);
+  const [aiError, setAiError] = useState("");
   const [slide, setSlide] = useState(0);
-  const [thinking, setThinking] = useState(false);
   const [progress, setProgress] = useState(-1); // -1 editing, otherwise index of the channel being created
   const track = useRef(null);
   const timers = useRef([]);
+  const suggested = suggestTemplate(prompt);
 
   useEffect(() => {
-    const onKey = (e) => { if (e.key === "Escape" && progress < 0) onClose(); };
+    const onKey = (e) => { if (e.key === "Escape" && progress < 0 && !designing) onClose(); };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [onClose, progress]);
+  }, [onClose, progress, designing]);
   useEffect(() => () => timers.current.forEach(clearTimeout), []);
   const later = (fn, ms) => timers.current.push(setTimeout(fn, ms));
+
+  /** Open a layout in the editor: every channel switched on, the ones the server already has marked. */
+  const choose = (t) => {
+    setTpl(t);
+    setCats(t.cats.map((c) => ({ ...c, ch: c.ch.map((x) => ({ ...x, on: true, exists: existing.has(x.name) })) })));
+    setSlide(0);
+    requestAnimationFrame(() => track.current?.scrollTo({ left: 0 }));
+  };
+  const design = async () => {
+    setDesigning(true);
+    setAiError("");
+    try {
+      const out = await api("POST", "/ai/community", { description: prompt });
+      choose({ id: "ai", icon: "✨", name: out.name, tagline: out.tagline, cats: out.cats, ai: true });
+    } catch (e) {
+      setAiError(e.message);
+    } finally {
+      setDesigning(false);
+    }
+  };
 
   const kept = new Set(cats.flatMap((c) => c.ch.map((x) => x.name)));
   const extra = guild.channels.filter((c) => !kept.has(baseName(c.name)));
@@ -48,11 +74,6 @@ export default function CommunityBuilder({ guild, brand, onCreate, onClose }) {
     }, 80);
   };
 
-  const regenerate = () => {
-    setThinking(true);
-    later(() => { setThinking(false); goTo(0); }, 1100);
-  };
-
   const create = () => {
     const tick = (i) => {
       setProgress(i);
@@ -63,6 +84,7 @@ export default function CommunityBuilder({ guild, brand, onCreate, onClose }) {
   };
 
   const creating = progress >= 0;
+  const newIn = (t) => t.cats.reduce((n, c) => n + c.ch.filter((x) => !existing.has(x.name)).length, 0);
 
   return (
     <div className="k-dlg" role="dialog" aria-modal="true" aria-labelledby="builderTitle">
@@ -71,7 +93,7 @@ export default function CommunityBuilder({ guild, brand, onCreate, onClose }) {
           <span className="k-ai"><Icon name="spark" /></span>
           <div>
             <h3 id="builderTitle">AI Community Builder</h3>
-            <span className="k-micro">Preview for {guild.guildName} · swipe through each category, rename or switch off anything</span>
+            <span className="k-micro">{!tpl ? `Pick a layout for ${guild.guildName}, or describe your community and let the AI design one` : `Preview for ${guild.guildName} · swipe through each category, rename or switch off anything`}</span>
           </div>
           {!creating && <button className="k-btn sm ghost k-x" type="button" onClick={onClose} aria-label="Close"><Icon name="x" /></button>}
         </header>
@@ -88,14 +110,61 @@ export default function CommunityBuilder({ guild, brand, onCreate, onClose }) {
               </div>
             ))}
           </div>
-        ) : (
+        ) : !tpl ? (
+          /* ---------- step 1: choose a template ---------- */
           <>
             <div className="k-prompt">
-              <input className="k-input" value={prompt} onChange={(e) => setPrompt(e.target.value)} aria-label="Describe your community" />
-              <button className="k-btn subtle" type="button" onClick={regenerate} disabled={thinking}>
-                {thinking ? <><span className="k-typing"><i /><i /><i /></span>Thinking</> : <><Icon name="redo" />Regenerate</>}
+              <input className="k-input" value={prompt} onChange={(e) => setPrompt(e.target.value)} aria-label="Describe your community" placeholder="Describe your community: who the creators are, what they sell, how you run it" />
+              <button className="k-btn subtle" type="button" onClick={design} disabled={designing || !conn.ai || prompt.trim().length < 10} title={conn.ai ? "" : "Add ANTHROPIC_API_KEY to backend/.env to use the AI designer"}>
+                {designing ? <><span className="k-typing"><i /><i /><i /></span>Designing</> : <><Icon name="spark" />Design with AI</>}
               </button>
             </div>
+            <div className="k-tpls">
+              {aiError && <p className="k-tpl-err" role="alert">{aiError}</p>}
+              {!conn.ai && <p className="k-micro">The AI designer is off on this server, so pick one of the ready-made layouts below.</p>}
+              <div className="k-tpl-grid">
+                {TEMPLATES.map((t) => {
+                  const fresh = newIn(t);
+                  return (
+                    <button key={t.id} type="button" className={"k-tpl" + (suggested?.id === t.id ? " match" : "")} onClick={() => choose(t)}>
+                      <div className="k-tpl-top">
+                        <span className="k-tpl-ic" aria-hidden="true">{t.icon}</span>
+                        <div style={{ minWidth: 0 }}>
+                          <b>{t.name}</b>
+                          <span className="k-micro">{t.bestFor}</span>
+                        </div>
+                        {suggested?.id === t.id && <span className="k-pill rose k-tpl-tag">Fits your description</span>}
+                      </div>
+                      <p>{t.tagline}</p>
+                      <div className="k-tpl-cats">{t.cats.map((c) => <span key={c.cat}>{c.cat}</span>)}</div>
+                      <div className="k-tpl-meta">
+                        <span>{t.cats.length} categories</span><span>{channelCount(t.cats)} channels</span><span>{automationCount(t.cats)} automations</span>
+                        {fresh < channelCount(t.cats) && <span>{fresh} new</span>}
+                        <span className="k-tpl-go">Preview <Icon name="arrow" size={14} /></span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <footer>
+              <span className="k-micro">Every layout includes the channels your automations post in, and a private moderators area for approvals. You can rename or switch off any channel next.</span>
+              <div className="k-r"><button className="k-btn" type="button" onClick={onClose}>Cancel</button></div>
+            </footer>
+          </>
+        ) : (
+          /* ---------- step 2: preview and edit ---------- */
+          <>
+            <div className="k-prompt k-tplbar">
+              <span className="k-tpl-ic sm" aria-hidden="true">{tpl.icon}</span>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <b>{tpl.name}</b>{tpl.ai && <span className="k-pill" style={{ marginLeft: 8 }}>Designed by AI</span>}
+                <div className="k-micro">{tpl.tagline}</div>
+              </div>
+              {tpl.ai && <button className="k-btn subtle sm" type="button" onClick={design} disabled={designing}>{designing ? <><span className="k-typing"><i /><i /><i /></span>Designing</> : <><Icon name="redo" />Try another design</>}</button>}
+              <button className="k-btn sm" type="button" onClick={() => setTpl(null)} disabled={designing} title="Go back to the layouts. Changes to this one are not kept."><Icon name="back" />Change template</button>
+            </div>
+            {aiError && <p className="k-tpl-err" role="alert" style={{ margin: "10px 22px 0" }}>{aiError}</p>}
             <div className="k-bbody">
               <div className="k-dside" aria-label="Server preview">
                 <div className="k-srv">{guild.guildName}</div>
@@ -157,10 +226,10 @@ export default function CommunityBuilder({ guild, brand, onCreate, onClose }) {
               </div>
             </div>
             <footer>
-              <span className="k-micro">Template: the creator community layout.</span>
+              <span className="k-micro">Template: {tpl.name}. New channels are added; channels you already have are kept as they are.</span>
               <div className="k-r">
                 <button className="k-btn" type="button" onClick={onClose}>Cancel</button>
-                <button className="k-btn primary" type="button" onClick={create} disabled={!todo.length}>
+                <button className="k-btn primary" type="button" onClick={create} disabled={!todo.length || designing}>
                   <Icon name="spark" />{todo.length ? `Create ${todo.length} channel${todo.length === 1 ? "" : "s"}` : "Nothing new to create"}
                 </button>
               </div>

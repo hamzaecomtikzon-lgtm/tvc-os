@@ -216,6 +216,23 @@ async function route(req, res) {
     return send(res, 200, { detected, source, default: { primary: DEFAULT_THEME.green, secondary: DEFAULT_THEME.red } });
   }
 
+  // AI Community Builder: design a server layout from a description of the community.
+  if (p === "/api/ai/community" && m === "POST") {
+    needAdmin();
+    if (!ai.configured()) throw fail(503, "The AI designer isn’t set up on the server. Pick one of the ready-made templates instead.", "ai_off");
+    const { description } = await readJson(req);
+    if (typeof description !== "string" || description.trim().length < 10) throw fail(400, "Describe your community in a sentence or two first.", "bad_request", "description");
+    try {
+      const out = await ai.communityTemplate({ brand: user.brand, description: description.trim().slice(0, 1500) });
+      if (!out) throw fail(422, "The AI couldn’t design a layout from that. Try describing it differently.", "ai_declined");
+      return send(res, 200, out);
+    } catch (e) {
+      if (e.status && e.code) throw e;
+      console.error("[ai community]", e);
+      throw fail(502, "The AI designer didn’t answer. Try again in a moment, or pick a ready-made template.", "ai_error");
+    }
+  }
+
   if (p === "/api/account" && m === "PUT") {
     const next = auth.update(user, await readJson(req));
     if (next.brand !== user.brand) record({ category: "settings", action: "brand.rename", label: next.brand, summary: `Renamed the brand from “${user.brand}” to “${next.brand}”` });
