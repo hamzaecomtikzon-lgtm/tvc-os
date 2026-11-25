@@ -11,6 +11,7 @@ import { crmFor, crmSource, shopFor } from "./crm.js";
 import { addDays, todayUTC, ymd } from "./dates.js";
 import * as tiers from "./tiers.js";
 import * as samples from "./samples.js";
+import * as audit from "./audit.js";
 
 const now = () => new Date().toISOString();
 const fail = (message, status = 400, code = "bad_request") => Object.assign(new Error(message), { status, code });
@@ -450,7 +451,7 @@ const HANDLERS = {
  * Start a job. Returns `{ id, done }`; `done` resolves to `{ status, result?, error?, code? }`
  * and never rejects.
  */
-export function startJob(ns, type, payload = {}) {
+export function startJob(ns, type, payload = {}, actor = audit.SYSTEM) {
   const handler = HANDLERS[type];
   if (!handler) throw fail("Unknown request type.");
   const cutoff = new Date(Date.now() - 36e5).toISOString();
@@ -464,14 +465,85 @@ export function startJob(ns, type, payload = {}) {
     try {
       const result = (await handler(ns, payload)) || {};
       store.update(ns, path, { status: "done", doneAt: now() });
+      auditJob(ns, type, payload, actor, { ok: true, result });
       return { status: "done", result };
     } catch (e) {
       if (!e.status) console.error(`[job ${type}]`, e);
       store.update(ns, path, { status: "failed", error: e.message });
+      auditJob(ns, type, payload, actor, { ok: false, error: e.message });
       return { status: "failed", error: e.message, code: e.code || "error" };
     }
   })();
   return { id: path.slice(9), done };
+}
+
+/* ---------- audit log entries for jobs ---------- */
+
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+/** The name an automation is shown under: a built-in one, or a custom one by its saved name. */
+const automationName = (ns, { automation, custom }) => (custom ? store.get(ns, "custom/" + custom)?.name || "a custom automation" : audit.autoName(automation));
+const memberName = (ns, userId) => store.get(ns, "dms/" + userId)?.name || "a member";
+const ownGuildName = (ns) => store.get(ns, "discord/" + workspace(ns).guildId)?.guildName || "Discord server";
+
+/** Write the audit line for a finished job. Read-only jobs (previews, marking a DM read, syncs the app runs itself) aren't recorded. */
+function auditJob(ns, type, p, actor, { ok, result = {}, error }) {
+  const draft = p.draftId && ID_RE.test(p.draftId) ? store.get(ns, "drafts/" + p.draftId) : null;
+  const dLabel = draft?.name || "Draft";
+  const dName = `“${dLabel}”`;
+  const who = p.userId ? memberName(ns, p.userId) : "";
+  const e = (() => {
+    switch (type) {
+      case "draft": {
+        const label = automationName(ns, p);
+        const name = `“${label}”`;
+        if (!ok) return { category: "posts", action: "draft.build_failed", label, summary: `Couldn’t build a draft for ${name}: ${error}` };
+        if (!result.draftId) return p.source === "schedule" ? null : { category: "posts", action: "draft.nothing", label, summary: `Ran ${name}: nothing to post. ${result.nothing || ""}`.trim() };
+        const d = store.get(ns, "drafts/" + result.draftId);
+        return { category: "posts", action: "draft.build", label, summary: `Built ${p.test ? "a test draft" : "a draft"} for ${name}${d?.channelName ? ` (for ${d.channel === "dm" ? "DMs" : "#" + d.channelName})` : ""}`, details: { draftId: result.draftId } };
+      }
+      case "post": {
+        if (!draft) return null;
+        if (!ok || result.posted === false) return { category: "posts", action: "draft.post_failed", label: dLabel, summary: `Tried to post ${dName} but it failed: ${error || result.error || draft.error || "unknown error"}`, details: { draftId: p.draftId } };
+        const did = draft.history?.[draft.history.length - 1]?.what || "Posted";
+        const verb = actor.type === "schedule" ? "Posted automatically" : "Approved";
+        return { category: "posts", action: "draft.post", label: dLabel, summary: `${verb} ${dName}: ${did}`, details: { draftId: p.draftId, messageUrl: draft.messageUrl || null, summary: draft.summary || null } };
+      }
+      case "reject":
+        return ok && draft ? { category: "posts", action: "draft.reject", label: dLabel, summary: `Rejected the draft ${dName}`, details: { draftId: p.draftId } } : null;
+      case "test":
+        return ok && draft ? { category: "posts", action: "draft.test", label: dLabel, summary: `Sent a test of ${dName} to the approvals channel` } : null;
+      case "create_channels": {
+        if (!ok) return { category: "bot", action: "channels.create_failed", label: "Discord channels", summary: `Couldn’t create channels in Discord: ${error}` };
+        const names = (result.created || []).map((c) => "#" + (c.name || c));
+        return names.length ? { category: "bot", action: "channels.create", label: names.slice(0, 4).join(", ") + (names.length > 4 ? ` +${names.length - 4}` : ""), summary: `Created ${plural(names.length, "channel")} in Discord: ${names.slice(0, 8).join(", ")}` } : null;
+      }
+      case "sync":
+        return actor.type === "user" && ok ? { category: "bot", action: "server.sync", label: ownGuildName(ns), summary: "Refreshed the Discord server’s channels and members" } : null;
+      case "profile":
+        return ok && result.warning ? { category: "bot", action: "bot.profile_warning", label: p.name || "Bot", summary: result.warning } : null;
+      case "dm":
+        return ok ? { category: "creators", action: "dm.reply", label: who, summary: `Replied to ${who}’s DM as the bot`, details: { text: String(p.text || "").slice(0, 300) } } : null;
+      case "dm_link":
+        if (!ok) return null;
+        return result.tiktok
+          ? { category: "creators", action: "creator.link", label: `${who} → @${result.tiktok}`, summary: `Linked ${who} to TikTok @${result.tiktok}` }
+          : { category: "creators", action: "creator.unlink", label: who, summary: `Unlinked ${who}’s TikTok handle` };
+      case "dm_status":
+        if (!ok) return null;
+        return p.status === "done"
+          ? { category: "creators", action: "dm.resolve", label: who, summary: `Marked ${who}’s conversation as resolved` }
+          : { category: "creators", action: "dm.reopen", label: who, summary: `Reopened ${who}’s conversation` };
+      case "welcome":
+        return ok
+          ? { category: "onboarding", action: "onboarding.welcome", label: who, summary: `Sent the welcome DM to ${who}` }
+          : { category: "onboarding", action: "onboarding.welcome_failed", label: who, summary: `Couldn’t send the welcome DM to ${who}: ${error}` };
+      case "welcome_all":
+        return ok ? { category: "onboarding", action: "onboarding.welcome_all", label: plural(result.sent || 0, "member"), summary: `Sent welcome DMs to ${plural(result.sent || 0, "member")}${result.failed ? `, ${result.failed} couldn’t be reached` : ""}` } : null;
+      default:
+        return null; // previews, dm_read, allowlist: nothing changed
+    }
+  })();
+  if (e) audit.log(ns, actor, e);
 }
 
 /* ---------- schedule: runs each automation at its day and time, in the workspace's time zone ---------- */
@@ -522,8 +594,8 @@ async function tick() {
       return true;
     };
     const run = async (payload, approve) => {
-      const built = await startJob(ns, "draft", { ...payload, source: "schedule" }).done;
-      if (built.status === "done" && built.result.draftId && !approve) await startJob(ns, "post", { draftId: built.result.draftId, by: "Schedule" }).done;
+      const built = await startJob(ns, "draft", { ...payload, source: "schedule" }, audit.SCHEDULE).done;
+      if (built.status === "done" && built.result.draftId && !approve) await startJob(ns, "post", { draftId: built.result.draftId, by: "Schedule" }, audit.SCHEDULE).done;
     };
     const items = autosOf(ns, gid);
     for (const [key, kind] of Object.entries(SCHEDULED)) {

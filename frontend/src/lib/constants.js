@@ -10,6 +10,7 @@ export const TABS = {
   onboarding: "Onboarding & DMs",
   content: "Content",
   workspace: "Settings",
+  "audit-logs": "Audit logs",
 };
 
 export const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];

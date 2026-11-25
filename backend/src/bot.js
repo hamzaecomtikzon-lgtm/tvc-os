@@ -8,6 +8,7 @@ import { discord, memberRow } from "./discord.js";
 import { ai } from "./ai.js";
 import { ymd } from "./dates.js";
 import { autosOf, cfgOf, obOf, startJob, tellMods } from "./jobs.js";
+import * as audit from "./audit.js";
 
 const now = () => new Date().toISOString();
 const PHONE_RE = /(\+?\d[\d\s().-]{7,}\d)/;
@@ -134,7 +135,7 @@ async function approveByReaction(ns, d) {
   const draft = store.list(ns, "drafts", (x) => x.modMessageId === d.message_id && x.status === "pending")[0];
   if (!draft) return;
   const by = d.member?.nick || d.member?.user?.global_name || d.member?.user?.username || "a moderator";
-  await startJob(ns, emoji === "✅" ? "post" : "reject", { draftId: draft.id, by: by + " (in Discord)" }).done;
+  await startJob(ns, emoji === "✅" ? "post" : "reject", { draftId: draft.id, by: by + " (in Discord)" }, audit.discordActor(by)).done;
 }
 
 /* ---------- members ---------- */
@@ -148,7 +149,14 @@ function onMemberAdd(d) {
   store.set(ns, "members/" + d.guild_id, doc);
   if (row.bot) return;
   const on = autosOf(ns, d.guild_id).onboarding?.enabled !== false && cfgOf(ns, d.guild_id).dmNew !== false;
-  if (on && store.get(ns, "workspace/main")?.done) return startOnboarding(ns, g, row);
+  if (on && store.get(ns, "workspace/main")?.done) {
+    return startOnboarding(ns, g, row).then(() => {
+      const t = store.get(ns, "dms/" + row.id);
+      audit.log(ns, audit.BOT, t?.status === "closed"
+        ? { category: "onboarding", action: "onboarding.welcome_failed", label: row.name, summary: `${row.name} joined the server, but the welcome DM couldn’t be delivered: ${t.error || "DMs are closed"}` }
+        : { category: "onboarding", action: "onboarding.welcome", label: row.name, summary: `${row.name} joined the server. Sent them the welcome DM` });
+    });
+  }
 }
 
 function onMemberRemove(d) {
@@ -261,11 +269,14 @@ async function onboardingDone(ns, g, t, ob) {
   if (ob.doneRole && g.roleNames?.[ob.doneRole]) {
     try {
       await discord.addRole(g.guildId, t.userId, ob.doneRole);
+      audit.log(ns, audit.BOT, { category: "onboarding", action: "role.give", label: `${t.name} → ${g.roleNames[ob.doneRole]}`, summary: `${t.name} finished onboarding${t.tiktok ? ` (TikTok @${t.tiktok})` : ""}. Gave them the ${g.roleNames[ob.doneRole]} role` });
     } catch (e) {
+      audit.log(ns, audit.BOT, { category: "onboarding", action: "role.give_failed", label: `${t.name} → ${g.roleNames[ob.doneRole]}`, summary: `Couldn’t give ${t.name} the ${g.roleNames[ob.doneRole]} role: ${e.message}` });
       console.error("[onboarding] role", e.message);
       store.set(ns, "dms/" + t.userId, { ...store.get(ns, "dms/" + t.userId), roleError: e.status === 403 ? `The bot couldn’t give the ${g.roleNames[ob.doneRole]} role. Give it Manage Roles and move it above that role.` : e.message });
     }
   }
+  if (!(ob.doneRole && g.roleNames?.[ob.doneRole])) audit.log(ns, audit.BOT, { category: "onboarding", action: "onboarding.done", label: t.tiktok ? `${t.name} (@${t.tiktok})` : t.name, summary: `${t.name} finished onboarding${t.tiktok ? ` (TikTok @${t.tiktok})` : ""}` });
   if (ob.notifyDone !== false) {
     const answers = ob.questions.filter((q) => t.answers?.[q]).map((q) => `• ${q} ${String(t.answers[q]).slice(0, 120)}`).join("\n");
     await tellMods(ns, g.guildId, `🎉 **${t.name}** finished onboarding${t.tiktok ? ` · TikTok @${t.tiktok}` : " · no TikTok handle linked"}\n${answers}`);

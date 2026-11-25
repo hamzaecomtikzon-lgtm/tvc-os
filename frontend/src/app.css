@@ -688,3 +688,44 @@ select.input { appearance: none; background-image: linear-gradient(45deg, transp
 /* Cards sit on the warm canvas, so they get the surface colour. */
 .auto:not(.off):not(.new), .card2, .kp, .appr, .tblwrap, .chatbox, .prevbox, .inbox { background: var(--color-surface); }
 .btn.disabled { opacity: 0.45; pointer-events: none; }
+
+/* Audit logs page (#audit-logs) */
+.al-filters { display: grid; grid-template-columns: minmax(200px, 1.6fr) repeat(4, minmax(130px, 1fr)); gap: 10px; margin-bottom: 14px; }
+.al-filters .input { height: 40px; width: 100%; min-width: 0; }
+.al-search { position: relative; display: block; }
+.al-search .ico { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); width: 16px; height: 16px; color: var(--color-text-subtle); pointer-events: none; }
+.al-search .input { padding-left: 36px; }
+.al-range { min-width: 250px; }
+.al-range .pi.on { background: var(--color-primary-tint); color: var(--color-primary); font-weight: 500; }
+.al-custom { display: grid; gap: 6px; padding: 10px; margin-top: 4px; border-top: 1px solid var(--color-border); font-size: var(--text-micro); color: var(--color-text-muted); }
+.al-custom .input { height: 34px; }
+.al-tbl { min-width: 1080px; }
+.al-tbl td { white-space: nowrap; }
+.al-time { color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
+.al-acct { color: var(--color-heading); font-weight: 500; max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
+.al-type { display: inline-block; padding: 3px 10px; border-radius: var(--radius-full); background: var(--color-accent-tint); color: var(--color-heading); font-size: var(--text-micro); font-weight: 500; }
+.al-shop { color: var(--color-heading); text-transform: uppercase; letter-spacing: 0.01em; max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+.al-shop small { font-size: 10px; margin-right: 6px; color: var(--color-text-muted); text-transform: lowercase; }
+.al-plat { display: inline-block; padding: 3px 10px; border-radius: var(--radius-full); font-size: var(--text-micro); font-weight: 600; }
+.al-plat.web { background: var(--color-primary-tint); color: var(--color-primary); }
+.al-plat.discord { background: rgba(88, 101, 242, 0.12); color: #4752c4; }
+.al-plat.schedule { background: var(--color-success-tint); color: var(--color-success); }
+.al-plat.bot { background: rgba(245, 158, 11, 0.14); color: #b45309; }
+.al-plat.system { background: var(--color-accent-tint); color: var(--color-text-muted); }
+.al-action { color: var(--color-heading); }
+.al-action.loud { color: var(--color-danger-text); font-weight: 500; }
+.al-target { max-width: 280px; overflow: hidden; text-overflow: ellipsis; color: var(--color-text); }
+.al-tbl tr.open td { background: var(--color-surface-subtle); border-bottom-color: transparent; }
+.al-tbl tr.al-detail { cursor: default; }
+.al-tbl tr.al-detail:hover td, .al-tbl tr.al-detail td { background: var(--color-surface-subtle); white-space: normal; }
+.al-detail-in { display: grid; gap: 8px; padding: 2px 0 6px; font-size: var(--text-small); max-width: 900px; }
+.al-detail-in b { color: var(--color-heading); font-weight: 500; }
+.al-detail-in ul { margin: 0; padding-left: 18px; display: grid; gap: 2px; }
+.al-detail-in blockquote { margin: 0; padding-left: 10px; border-left: 3px solid var(--color-border-strong); white-space: pre-wrap; }
+.al-detail-in pre { margin: 0; white-space: pre-wrap; font-family: inherit; }
+.al-detail-in .muted { font-size: var(--text-micro); }
+.al-tbl tr.al-empty { cursor: default; }
+.al-tbl tr.al-empty:hover td { background: none; }
+.al-more { margin-top: 14px; }
+@media (max-width: 1100px) { .al-filters { grid-template-columns: 1fr 1fr; } .al-search { grid-column: 1 / -1; } }
+@media (max-width: 560px) { .al-filters { grid-template-columns: 1fr; } }

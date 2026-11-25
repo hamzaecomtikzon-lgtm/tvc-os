@@ -7,12 +7,12 @@ import { CRMS, SLOTS, autoMatch, baseName, readAvatar } from "../lib/setup.js";
 import { ago, initials } from "../lib/format.js";
 import { BotAvatar, ChanSelect, Dialog, Ico, PageHead, Sw } from "../components/ui.jsx";
 import CommunityBuilder from "../components/CommunityBuilder.jsx";
-
 const TABS = [["workspace", "Workspace", "home"], ["bot", "Bot & server", "server"], ["channels", "Channels", "hash"], ["crm", "CRM & data", "plug"], ["team", "Team", "users"], ["notifications", "Notifications", "bell"], ["billing", "Plan & billing", "card"]];
 const PANELS = { workspace: Workspace, bot: Bot, channels: Channels, crm: Crm, team: Team, notifications: Notifications, billing: Billing };
 
 export default function Settings() {
   const { view, setView } = useApp();
+  const tabs = TABS;
   const t = PANELS[view.set] ? view.set : "workspace";
   const Panel = PANELS[t];
   return (
@@ -20,7 +20,7 @@ export default function Settings() {
       <PageHead title="Settings" desc="Your workspace, bot, channels, data and team." />
       <div className="set">
         <nav className="setnav" aria-label="Settings sections">
-          {TABS.map(([k, l, i]) => <button key={k} type="button" className={t === k ? "on" : ""} onClick={() => setView({ set: k })}><Ico name={i} />{l}</button>)}
+          {tabs.map(([k, l, i]) => <button key={k} type="button" className={t === k ? "on" : ""} onClick={() => setView({ set: k })}><Ico name={i} />{l}</button>)}
         </nav>
         <div className="setbody"><Panel /></div>
       </div>

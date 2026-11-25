@@ -22,6 +22,13 @@ import { gateway } from "./gateway.js";
 import { onEvent } from "./bot.js";
 import { ai } from "./ai.js";
 import { DEFAULT_THEME, brandInfo } from "./brandTheme.js";
+import * as audit from "./audit.js";
+
+/** Record a sign-in or sign-up in the workspace's audit log, then hand the user back. `action` is auth.signin, auth.signup or auth.join. */
+function signedIn(user, action, label, how) {
+  audit.log(user.workspace, audit.actorOf(user), { category: "security", action, label, summary: how });
+  return user;
+}
 
 const PORT = Number(process.env.PORT) || 8787;
 const MAX_BODY = 1024 * 1024;
@@ -76,9 +83,14 @@ async function route(req, res) {
   const p = url.pathname;
   const m = req.method;
 
-  if (p === "/api/auth/signup" && m === "POST") return send(res, 200, { user: auth.signUp(res, await readJson(req)) });
-  if (p === "/api/auth/signin" && m === "POST") return send(res, 200, { user: auth.signIn(res, await readJson(req)) });
+  if (p === "/api/auth/signup" && m === "POST") {
+    const u = auth.signUp(res, await readJson(req));
+    return send(res, 200, { user: u.role === "Owner" ? signedIn(u, "auth.signup", u.brand, "Signed up and created the workspace") : signedIn(u, "auth.join", u.role, `Joined the team as ${u.role}`) });
+  }
+  if (p === "/api/auth/signin" && m === "POST") return send(res, 200, { user: signedIn(auth.signIn(res, await readJson(req)), "auth.signin", "Email & password", "Signed in with email and password") });
   if (p === "/api/auth/signout" && m === "POST") {
+    const u = auth.user(req);
+    if (u) audit.log(u.workspace, audit.actorOf(u), { category: "security", action: "auth.signout", label: "Session", summary: "Signed out" });
     auth.signOut(req, res);
     return send(res, 200, {});
   }
@@ -97,7 +109,7 @@ async function route(req, res) {
       let to = "/#dashboard";
       try {
         if (url.searchParams.get("error")) throw fail(400, "Google sign-in was cancelled.");
-        await auth.googleFinish(req, res, { code: url.searchParams.get("code"), state: url.searchParams.get("state") }, back);
+        signedIn(await auth.googleFinish(req, res, { code: url.searchParams.get("code"), state: url.searchParams.get("state") }, back), "auth.signin", "Google", "Signed in with Google");
       } catch (e) {
         if (!e.status) console.error("[google sign-in]", e);
         to = "/?auth_error=" + encodeURIComponent(e.status ? e.message : "Google sign-in failed. Try again.") + "#signin";
@@ -129,6 +141,27 @@ async function route(req, res) {
   const cid = String(req.headers["x-client-id"] || "");
   const admin = user.role === "Owner" || user.role === "Admin";
   const needAdmin = () => { if (!admin) throw fail(403, "Your role can’t change this. Ask the workspace owner.", "forbidden"); };
+  const me = audit.actorOf(user);
+  const record = (e) => audit.log(ns, me, e);
+
+  // Audit log: who did what, and when. Owners and admins only.
+  if (p === "/api/audit" && m === "GET") {
+    needAdmin();
+    const s = url.searchParams;
+    const page = audit.list(ns, {
+      category: s.get("category"), actor: s.get("actor"), action: s.get("action"), shop: s.get("shop"), platform: s.get("platform"),
+      q: s.get("q"), before: s.get("before"), from: s.get("from"), to: s.get("to"), limit: s.get("limit"),
+    });
+    // Shop names and regions come from the CRM (cached); entries only keep the shop's id.
+    let shops = {};
+    try {
+      shops = Object.fromEntries((await crmFor(ns).listShops()).map((x) => [x.id, { name: x.name, region: x.region }]));
+    } catch { /* the CRM is down: show ids */ }
+    const shopOf = (id) => (id ? { id, name: shops[id]?.name || id, region: shops[id]?.region || "" } : null);
+    const entries = page.entries.map((e) => ({ ...e, shop: shopOf(e.shopId), target: e.action === "shop.switch" ? shopOf(e.target)?.name || e.target : e.target }));
+    const f = s.get("before") ? null : audit.facets(ns);
+    return send(res, 200, { entries, next: page.next, categories: audit.CATEGORIES, ...(f ? { ...f, shops: f.shops.map(shopOf) } : {}) });
+  }
 
   if (p === "/api/config" && m === "GET") return send(res, 200, { discord: await discord.info(), gateway: gateway.status, ai: ai.configured(), crm: crmSource(ns), crmConnection: crmKeys.info(ns) });
 
@@ -141,14 +174,18 @@ async function route(req, res) {
     const key = typeof apiKey === "string" ? apiKey.trim() : "";
     if (key.length < 16 || key.length > 512 || /\s/.test(key)) throw fail(400, "That doesn’t look like a Cruva API key. Copy the whole key from Cruva → Settings → API.", "bad_key", "apiKey");
     const shops = await verifyCruvaKey(key);
+    const had = crmKeys.info(ns);
     forgetCruvaKey(cruvaKeyFor(ns));
     crmKeys.save(ns, "cruva", key, shops.length);
+    record({ category: "security", action: had ? "crm.key_change" : "crm.connect", label: `Cruva (key …${key.slice(-4)})`, summary: `${had ? "Replaced" : "Connected"} the Cruva API key (ending ${key.slice(-4)}, ${shops.length} shop${shops.length === 1 ? "" : "s"})` });
     return send(res, 200, { connection: crmKeys.info(ns), source: crmSource(ns), shops: await crmFor(ns).listShops() });
   }
   if (p === "/api/crm-connection" && m === "DELETE") {
     needAdmin();
+    const had = crmKeys.info(ns);
     forgetCruvaKey(crmKeys.key(ns, "cruva"));
     crmKeys.remove(ns);
+    if (had) record({ category: "security", action: "crm.disconnect", label: `Cruva (key …${had.last4})`, summary: `Disconnected Cruva (key ending ${had.last4}). Cards and automations fall back to sample data.` });
     return send(res, 200, { connection: null, source: crmSource(ns) });
   }
 
@@ -179,18 +216,35 @@ async function route(req, res) {
     return send(res, 200, { detected, source, default: { primary: DEFAULT_THEME.green, secondary: DEFAULT_THEME.red } });
   }
 
-  if (p === "/api/account" && m === "PUT") return send(res, 200, { user: auth.update(user, await readJson(req)) });
+  if (p === "/api/account" && m === "PUT") {
+    const next = auth.update(user, await readJson(req));
+    if (next.brand !== user.brand) record({ category: "settings", action: "brand.rename", label: next.brand, summary: `Renamed the brand from “${user.brand}” to “${next.brand}”` });
+    if (next.name !== user.name) audit.log(ns, audit.actorOf(next), { category: "team", action: "profile.rename", label: next.name, summary: `Changed their name from “${user.name}” to “${next.name}”` });
+    return send(res, 200, { user: next });
+  }
   if (p === "/api/team" && m === "GET") return send(res, 200, auth.team(ns));
   if (p === "/api/team" && m === "POST") {
     needAdmin();
-    auth.invite(ns, await readJson(req));
+    const body = await readJson(req);
+    auth.invite(ns, body);
+    record({ category: "team", action: "team.invite", label: String(body.email).trim().toLowerCase(), summary: `Invited ${String(body.email).trim().toLowerCase()} as ${body.role}` });
     return send(res, 200, auth.team(ns));
   }
   if (p.startsWith("/api/team/") && (m === "PUT" || m === "DELETE")) {
     needAdmin();
     const email = decodeURIComponent(p.slice("/api/team/".length)).toLowerCase();
-    if (m === "PUT") auth.setRole(ns, email, (await readJson(req)).role);
-    else auth.remove(ns, email);
+    const t = auth.team(ns);
+    const member = t.members.find((x) => x.email === email), invite = t.invites.find((x) => x.email === email);
+    if (m === "PUT") {
+      const { role } = await readJson(req);
+      auth.setRole(ns, email, role);
+      const was = (member || invite)?.role;
+      if (was && was !== role) record({ category: "team", action: "team.role", label: `${email}: ${was} → ${role}`, summary: `Changed ${member ? member.name + " (" + email + ")" : email + "’s invite"} from ${was} to ${role}` });
+    } else {
+      auth.remove(ns, email);
+      if (member) record({ category: "team", action: "team.remove", label: email, summary: `Removed ${member.name} (${email}, ${member.role}) from the team` });
+      else if (invite) record({ category: "team", action: "team.uninvite", label: email, summary: `Cancelled the invite for ${email}` });
+    }
     return send(res, 200, auth.team(ns));
   }
 
@@ -200,6 +254,8 @@ async function route(req, res) {
     forgetCruvaKey(crmKeys.key(ns, "cruva"));
     crmKeys.remove(ns); // deleting the workspace also deletes its saved CRM key
     store.clear(ns);
+    // The audit log is kept on purpose: a reset is exactly the kind of thing it's for.
+    record({ category: "security", action: "workspace.reset", label: user.brand, summary: "Reset the workspace: deleted all settings, drafts, automations and the saved CRM key" });
     return send(res, 200, {});
   }
   if (p.startsWith("/api/docs/") && m === "PUT") {
@@ -210,12 +266,17 @@ async function route(req, res) {
     if (path === "workspace/main" && doc.guildId) {
       if (!store.get(ns, "discord/" + doc.guildId) || claimedByOther(ns, doc.guildId)) throw fail(409, "That server isn’t available.", "guild_unavailable");
     }
+    const before = store.get(ns, path);
     store.set(ns, path, doc, cid);
+    for (const e of audit.describeDoc(ns, path, before, doc)) record(e);
     return send(res, 200, {});
   }
   if (p.startsWith("/api/docs/") && m === "DELETE") {
     needAdmin();
-    store.remove(ns, docPath(url), cid);
+    const path = docPath(url);
+    const before = store.get(ns, path);
+    store.remove(ns, path, cid);
+    if (before) for (const e of audit.describeDoc(ns, path, before, null)) record(e);
     return send(res, 200, {});
   }
 
@@ -233,7 +294,7 @@ async function route(req, res) {
     if (!MOD_JOBS.includes(type) || user.role === "Viewer") needAdmin();
     const data = payload && typeof payload === "object" ? payload : {};
     if (type === "post" || type === "reject") data.by = user.name; // who approved is never taken from the browser
-    const job = startJob(ns, String(type), data);
+    const job = startJob(ns, String(type), data, me); // the audit log's "who" comes from the session, never the browser
     return send(res, 200, wait ? { id: job.id, ...(await job.done) } : { id: job.id, status: "working" });
   }
 

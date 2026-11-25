@@ -17,11 +17,12 @@ import Builder from "./pages/Builder.jsx";
 import Onboarding from "./pages/Onboarding.jsx";
 import Content from "./pages/Content.jsx";
 import Settings from "./pages/Settings.jsx";
+import AuditLogs from "./pages/AuditLogs.jsx";
 import Landing from "./pages/Landing.jsx";
 import Auth from "./pages/Auth.jsx";
 import SetupOverlay from "./pages/SetupOverlay.jsx";
 
-const PAGES = { dashboard: Dashboard, analytics: Analytics, approvals: Approvals, automations: Automations, "automation-builder": Builder, onboarding: Onboarding, content: Content, workspace: Settings };
+const PAGES = { dashboard: Dashboard, analytics: Analytics, approvals: Approvals, automations: Automations, "automation-builder": Builder, onboarding: Onboarding, content: Content, workspace: Settings, "audit-logs": AuditLogs };
 const NAV = [["dashboard", "Dashboard", "home"], ["analytics", "Analytics", "chart"], ["approvals", "Approvals", "check"], ["automations", "Automations", "bolt"], ["onboarding", "Onboarding & DMs", "chat"], ["content", "Content", "play"]];
 const TRIAL_DAYS = 14;
 
@@ -68,7 +69,7 @@ export default function App() {
 }
 
 function Side({ tab, open, close }) {
-  const { guild, botName, autos, customs, drafts, dms, user, go } = useApp();
+  const { guild, botName, autos, customs, drafts, dms, user, go, isAdmin } = useApp();
   const badge = {
     approvals: drafts.filter((d) => d.status === "pending").length,
     automations: AUTOS.filter((a) => autos[a.key]?.enabled).length + customs.filter((c) => c.on).length,
@@ -93,6 +94,7 @@ function Side({ tab, open, close }) {
           ))}
           <div className="navlabel">Workspace</div>
           <a href="#workspace" className={tab === "workspace" ? "on" : ""}><Ico name="gear" />Settings</a>
+          {isAdmin && <a href="#audit-logs" className={tab === "audit-logs" ? "on" : ""} aria-current={tab === "audit-logs" ? "page" : undefined}><Ico name="shield" />Audit logs</a>}
         </nav>
         <div className="trial">
           <b>{left ? `Free trial · ${left} day${left === 1 ? "" : "s"} left` : "Free trial ended"}</b>
