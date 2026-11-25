@@ -21,6 +21,7 @@ import { cfgOf, claimedByOther, startJob, startScheduler } from "./jobs.js";
 import { gateway } from "./gateway.js";
 import { onEvent } from "./bot.js";
 import { ai } from "./ai.js";
+import { DEFAULT_THEME, brandInfo } from "./brandTheme.js";
 
 const PORT = Number(process.env.PORT) || 8787;
 const MAX_BODY = 1024 * 1024;
@@ -170,6 +171,12 @@ async function route(req, res) {
       console.error("[ai builder]", e);
       throw fail(502, "The AI builder didn’t answer. Try again in a moment.", "ai_error");
     }
+  }
+
+  // The colors generated cards use: read from the uploaded company picture, unless picked by hand.
+  if (p === "/api/brand" && m === "GET") {
+    const { picked, detected, source } = brandInfo(store.get(ns, "workspace/main") || {});
+    return send(res, 200, { picked, detected, source, default: { primary: DEFAULT_THEME.green, secondary: DEFAULT_THEME.red } });
   }
 
   if (p === "/api/account" && m === "PUT") return send(res, 200, { user: auth.update(user, await readJson(req)) });

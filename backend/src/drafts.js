@@ -6,6 +6,7 @@ import { leaderCard, numbersCard, scriptCard, winCard } from "./cards.js";
 import { hash } from "./rng.js";
 import { cruvaKeyFor } from "./crm.js";
 import { pickViral, videoFrames } from "./viral.js";
+import { brandTheme } from "./brandTheme.js";
 
 export const AUTO_NAMES = {
   viral_hooks: "Viral hooks & angles",
@@ -95,6 +96,9 @@ async function analyse(shop, s, v, ads, $) {
     closing: ads ? `${Math.round(100 - ads.rate2s)}% swiped in the first 2 seconds. Win those and the brand can scale your video.` : "Remake it this week. lessgoooo 🚀",
   };
 }
+
+/** The logo and colors this workspace's cards are drawn in (from its uploaded company picture). */
+const themeFor = (ns) => brandTheme(store.get(ns, "workspace/main") || {});
 
 const mediaUrl = (ns, png) => `/api/media/${store.putMedia(ns, png)}.png`;
 
@@ -236,7 +240,7 @@ export const BUILD = {
         ].filter(Boolean).join("\n"),
       });
 
-    const cardBase = { brand: shop.name, period: win.card, handle: v.handle };
+    const cardBase = { brand: shop.name, period: win.card, handle: v.handle, theme: themeFor(ns) };
     if (parts.includes("Numbers card")) {
       try {
         const png = await numbersCard({ ...cardBase, sym: $, product, views: v.views, gmv: v.gmv, units: v.units_sold, commission: v.commission, ads });
@@ -299,11 +303,12 @@ export const BUILD = {
       .slice(0, s.max || 5);
     if (!hits.length) return [{ text: "no new milestones yesterday. today’s yours 💪" }];
     const out = [];
+    const theme = themeFor(ns);
     for (const { c, n } of hits) {
       let images = [];
       if (s.graphic !== false) {
         try {
-          images = [mediaUrl(ns, await winCard({ brand: shop.name, handle: c.handle, n, levels }))];
+          images = [mediaUrl(ns, await winCard({ brand: shop.name, handle: c.handle, n, levels, theme }))];
         } catch (e) {
           console.error("[wins] card", e);
         }
@@ -324,7 +329,7 @@ export const BUILD = {
     let images = [];
     if (s.graphic !== false) {
       try {
-        images = [mediaUrl(ns, await leaderCard({ brand: shop.name, period: week.card, sym: $, top }))];
+        images = [mediaUrl(ns, await leaderCard({ brand: shop.name, period: week.card, sym: $, top, theme: themeFor(ns) }))];
       } catch (e) {
         console.error("[leaderboard] card", e);
       }

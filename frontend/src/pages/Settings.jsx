@@ -74,6 +74,53 @@ function Workspace() {
   );
 }
 
+/** The logo and colors used on generated cards (winning angle, wins, leaderboard). Read from the bot picture unless picked by hand. */
+function BrandColors() {
+  const { ws, botAvatar, saveWs, toast, isAdmin } = useApp();
+  const [info, setInfo] = useState(null);
+  const [draft, setDraft] = useState(null);
+  const picked = ws.brandColors?.primary ? ws.brandColors : null;
+  useEffect(() => {
+    let live = true;
+    api("GET", "/brand").then((r) => live && setInfo(r)).catch(() => live && setInfo(null));
+    return () => { live = false; };
+  }, [botAvatar, picked?.primary, picked?.secondary]);
+  const shown = picked || info?.detected || info?.default || { primary: "#0A9444", secondary: "#D3263A" };
+  const cur = draft || { primary: shown.primary, secondary: shown.secondary || shown.primary };
+  const save = async (brandColors) => {
+    if (await saveWs({ brandColors })) toast(brandColors ? "Brand colors saved. New cards use them." : "Back to the colors from your logo.");
+    setDraft(null);
+  };
+  const source = picked ? "Picked by hand" : info?.source === "logo" ? "Taken from your bot picture" : botAvatar ? "Couldn’t find colors in your picture, so cards use the default palette" : "Upload a bot picture (your logo) and cards take its colors";
+  const swatch = (key, label) => (
+    <label className="field" style={{ minWidth: 140 }}>{label}
+      <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <input type="color" value={cur[key]} disabled={!isAdmin} onChange={(e) => setDraft({ ...cur, [key]: e.target.value.toUpperCase() })} style={{ width: 44, height: 34, padding: 2, border: "1px solid var(--color-border)", borderRadius: 8, background: "none" }} />
+        <code style={{ fontSize: "var(--text-micro)" }}>{cur[key]}</code>
+      </span>
+    </label>
+  );
+  return (
+    <section className="card2">
+      <div className="h"><h3>Brand look on cards</h3><p>The winning angle, creator win and leaderboard images show your logo and these colors.</p></div>
+      <div style={{ display: "flex", gap: 18, alignItems: "flex-end", flexWrap: "wrap" }}>
+        <div className="bav" style={{ width: 56, height: 56, fontSize: 22, borderRadius: 14, overflow: "hidden" }}><BotAvatar /></div>
+        {swatch("primary", "Main color")}
+        {swatch("secondary", "Second color")}
+        <div style={{ display: "flex", height: 10, width: 120, borderRadius: 4, overflow: "hidden", alignSelf: "center", border: "1px solid var(--color-border)" }}>
+          <span style={{ flex: 1, background: cur.primary }} /><span style={{ flex: 1, background: "#fff" }} /><span style={{ flex: 1, background: cur.secondary }} />
+        </div>
+      </div>
+      <small className="muted" style={{ fontSize: "var(--text-micro)" }}>{source}. Cards already built keep their old look; rebuild a draft to see the new one.</small>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {draft && <button className="btn primary sm" type="button" disabled={!isAdmin} onClick={() => save(draft)}>Save colors</button>}
+        {draft && <button className="btn sm ghost" type="button" onClick={() => setDraft(null)}>Cancel</button>}
+        {!draft && picked && <button className="btn sm ghost" type="button" disabled={!isAdmin} onClick={() => save(null)}>{botAvatar ? "Use colors from my logo" : "Use default colors"}</button>}
+      </div>
+    </section>
+  );
+}
+
 function Bot() {
   const { ws, guild, cfg, botName, botAvatar, channels, members, conn, discordInfo, saveWs, saveCfg, requestWait, checkDiscord, toast, user, isAdmin } = useApp();
   const [name, setName] = useState(botName);
@@ -124,6 +171,7 @@ function Bot() {
         <label className="field">Bot name<input className="input" value={name} maxLength={32} disabled={!isAdmin} onChange={(e) => setName(e.target.value)} /><small>Set as the bot’s nickname in your server. Discord only lets some bots have a per-server picture; if yours can’t, the picture shows here and in previews only.</small></label>
         <div><button className="btn primary" type="button" disabled={!isAdmin || !!busy} onClick={() => apply({})}>{busy === "save" ? "Saving…" : "Save"}</button></div>
       </section>
+      <BrandColors />
       <section className="card2">
         <div className="h"><h3>Discord server</h3><div className="r"><button className="btn sm" type="button" disabled={!isAdmin || !!busy} onClick={sync}><Ico name="redo" />{busy === "sync" ? "Refreshing…" : "Refresh"}</button></div></div>
         <div className="dl">
