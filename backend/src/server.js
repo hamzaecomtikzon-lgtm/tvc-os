@@ -173,10 +173,10 @@ async function route(req, res) {
     }
   }
 
-  // The colors generated cards use: read from the uploaded company picture, unless picked by hand.
+  // The colors generated cards use, read automatically from the uploaded company picture.
   if (p === "/api/brand" && m === "GET") {
-    const { picked, detected, source } = brandInfo(store.get(ns, "workspace/main") || {});
-    return send(res, 200, { picked, detected, source, default: { primary: DEFAULT_THEME.green, secondary: DEFAULT_THEME.red } });
+    const { detected, source } = brandInfo(store.get(ns, "workspace/main") || {});
+    return send(res, 200, { detected, source, default: { primary: DEFAULT_THEME.green, secondary: DEFAULT_THEME.red } });
   }
 
   if (p === "/api/account" && m === "PUT") return send(res, 200, { user: auth.update(user, await readJson(req)) });

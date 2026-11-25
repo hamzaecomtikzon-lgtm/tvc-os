@@ -1,7 +1,7 @@
 /*
  * The brand look for generated cards: the workspace's logo (its uploaded company
- * picture) and a palette taken from that logo, or from colors picked by hand.
- * Without either, cards keep the default palette.
+ * picture) and a palette taken from that logo automatically.
+ * Without a usable logo, cards keep the default palette.
  */
 import { Resvg } from "@resvg/resvg-js";
 
@@ -13,7 +13,6 @@ export const DEFAULT_THEME = {
   night: { bg: "#1C2350", bg2: "#232B5E", line: "#38417A", soft: "#AEB4D6", face: "#8C93BF" },
 };
 
-const HEX = /^#[0-9a-f]{6}$/i;
 const toRgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
 const toHex = (rgb) => "#" + rgb.map((v) => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, "0")).join("").toUpperCase();
 /** `a` blended toward `b` by `t` (0 = a, 1 = b). */
@@ -109,22 +108,19 @@ export function themeFrom({ primary, secondary }, logo = "") {
 
 const cache = new Map(); // logo → colors, so a logo is only read once
 
-/** The workspace's logo, hand-picked colors, and the colors read from its logo. */
+/** The workspace's logo (its uploaded company picture) and the colors read from it. Fully automatic: nothing is picked by hand. */
 export function brandInfo(ws = {}) {
   const logo = typeof ws.bot?.avatar === "string" && ws.bot.avatar.startsWith("data:image/") ? ws.bot.avatar : "";
-  const bc = ws.brandColors;
-  const picked = bc && HEX.test(bc.primary || "") ? { primary: bc.primary, secondary: HEX.test(bc.secondary || "") ? bc.secondary : null } : null;
   if (logo && !cache.has(logo)) {
     if (cache.size > 200) cache.clear();
     cache.set(logo, colorsFromLogo(logo));
   }
   const detected = (logo && cache.get(logo)) || null;
-  return { logo, picked, detected, source: picked ? "picked" : detected ? "logo" : "default" };
+  return { logo, detected, source: detected ? "logo" : logo ? "no_colors" : "no_logo" };
 }
 
-/** The theme for a workspace document: hand-picked colors first, then the logo's, then the default palette. */
+/** The theme for a workspace document: the logo's colors, or the default palette when there is no usable logo. */
 export function brandTheme(ws = {}) {
-  const { logo, picked, detected } = brandInfo(ws);
-  const colors = picked || detected;
-  return colors ? themeFrom(colors, logo) : { ...DEFAULT_THEME, logo };
+  const { logo, detected } = brandInfo(ws);
+  return detected ? themeFrom(detected, logo) : { ...DEFAULT_THEME, logo };
 }

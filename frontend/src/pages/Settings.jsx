@@ -74,49 +74,38 @@ function Workspace() {
   );
 }
 
-/** The logo and colors used on generated cards (winning angle, wins, leaderboard). Read from the bot picture unless picked by hand. */
+/** The logo and colors used on generated cards (winning angle, wins, leaderboard). Read automatically from the bot picture; nothing to pick. */
 function BrandColors() {
-  const { ws, botAvatar, saveWs, toast, isAdmin } = useApp();
+  const { botAvatar } = useApp();
   const [info, setInfo] = useState(null);
-  const [draft, setDraft] = useState(null);
-  const picked = ws.brandColors?.primary ? ws.brandColors : null;
   useEffect(() => {
     let live = true;
     api("GET", "/brand").then((r) => live && setInfo(r)).catch(() => live && setInfo(null));
     return () => { live = false; };
-  }, [botAvatar, picked?.primary, picked?.secondary]);
-  const shown = picked || info?.detected || info?.default || { primary: "#0A9444", secondary: "#D3263A" };
-  const cur = draft || { primary: shown.primary, secondary: shown.secondary || shown.primary };
-  const save = async (brandColors) => {
-    if (await saveWs({ brandColors })) toast(brandColors ? "Brand colors saved. New cards use them." : "Back to the colors from your logo.");
-    setDraft(null);
-  };
-  const source = picked ? "Picked by hand" : info?.source === "logo" ? "Taken from your bot picture" : botAvatar ? "Couldn’t find colors in your picture, so cards use the default palette" : "Upload a bot picture (your logo) and cards take its colors";
-  const swatch = (key, label) => (
-    <label className="field" style={{ minWidth: 140 }}>{label}
-      <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <input type="color" value={cur[key]} disabled={!isAdmin} onChange={(e) => setDraft({ ...cur, [key]: e.target.value.toUpperCase() })} style={{ width: 44, height: 34, padding: 2, border: "1px solid var(--color-border)", borderRadius: 8, background: "none" }} />
-        <code style={{ fontSize: "var(--text-micro)" }}>{cur[key]}</code>
-      </span>
-    </label>
+  }, [botAvatar]);
+  const c = info?.detected || info?.default || { primary: "#0A9444", secondary: "#D3263A" };
+  const second = c.secondary || c.primary;
+  const note = info?.source === "logo" ? "Colors are taken from your picture automatically. Change the picture and the theme changes with it."
+    : botAvatar ? "No clear colors in your picture, so cards use the default palette. A logo with stronger colors works best."
+    : "Upload your company logo as the bot picture above and the cards take its colors automatically.";
+  const dot = (color, label) => (
+    <div style={{ display: "flex", gap: 8, alignItems: "center", fontSize: "var(--text-small)" }}>
+      <span style={{ width: 28, height: 28, borderRadius: 8, background: color, border: "1px solid var(--color-border)" }} />
+      <div><div style={{ color: "var(--color-heading)", fontWeight: 500 }}>{label}</div><code style={{ fontSize: "var(--text-micro)" }}>{color}</code></div>
+    </div>
   );
   return (
     <section className="card2">
-      <div className="h"><h3>Brand look on cards</h3><p>The winning angle, creator win and leaderboard images show your logo and these colors.</p></div>
-      <div style={{ display: "flex", gap: 18, alignItems: "flex-end", flexWrap: "wrap" }}>
+      <div className="h"><h3>Brand look on cards</h3><p>The winning angle, creator win and leaderboard images use your logo and its colors.</p></div>
+      <div style={{ display: "flex", gap: 22, alignItems: "center", flexWrap: "wrap" }}>
         <div className="bav" style={{ width: 56, height: 56, fontSize: 22, borderRadius: 14, overflow: "hidden" }}><BotAvatar /></div>
-        {swatch("primary", "Main color")}
-        {swatch("secondary", "Second color")}
-        <div style={{ display: "flex", height: 10, width: 120, borderRadius: 4, overflow: "hidden", alignSelf: "center", border: "1px solid var(--color-border)" }}>
-          <span style={{ flex: 1, background: cur.primary }} /><span style={{ flex: 1, background: "#fff" }} /><span style={{ flex: 1, background: cur.secondary }} />
+        {dot(c.primary, "Main color")}
+        {dot(second, "Second color")}
+        <div style={{ display: "flex", height: 10, width: 120, borderRadius: 4, overflow: "hidden", border: "1px solid var(--color-border)" }}>
+          <span style={{ flex: 1, background: c.primary }} /><span style={{ flex: 1, background: "#fff" }} /><span style={{ flex: 1, background: second }} />
         </div>
       </div>
-      <small className="muted" style={{ fontSize: "var(--text-micro)" }}>{source}. Cards already built keep their old look; rebuild a draft to see the new one.</small>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        {draft && <button className="btn primary sm" type="button" disabled={!isAdmin} onClick={() => save(draft)}>Save colors</button>}
-        {draft && <button className="btn sm ghost" type="button" onClick={() => setDraft(null)}>Cancel</button>}
-        {!draft && picked && <button className="btn sm ghost" type="button" disabled={!isAdmin} onClick={() => save(null)}>{botAvatar ? "Use colors from my logo" : "Use default colors"}</button>}
-      </div>
+      <small className="muted" style={{ fontSize: "var(--text-micro)" }}>{note} Cards already built keep their old look; rebuild a draft to see the new one.</small>
     </section>
   );
 }
