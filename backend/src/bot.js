@@ -165,11 +165,24 @@ export function readModReply(raw) {
   return { asks, gap, words };
 }
 
-/** The drafts a part of a message points at: the one replied to, ones named, "all", or the only one. */
+const RECENT = 24 * 36e5; // "approve all" covers drafts shown in the last day, never weeks-old leftovers
+
+/**
+ * The drafts a part of a message points at, without ever asking back:
+ * the one replied to; else the ones named (newest, or all recent ones of that name with "all"/a gap);
+ * else with "all"/a gap every draft shown in the last day; else the newest draft (the one just shown).
+ * Each draft still posts to its own automation's channel.
+ */
 function draftsFor(ns, gid, ask, { refDraft, gap, multi }) {
   const open = reviewable(ns, gid);
   const pool = ask.intent === "approve" ? open.filter((x) => !x.postAt) : open;
   if (refDraft && !multi) return { list: pool.some((x) => x.id === refDraft.id) ? [refDraft] : [], why: "replied" };
+  const newest = (list) => list.slice(-1);
+  const recent = (list) => {
+    const r = list.filter((x) => Date.now() - Date.parse(x.createdAt || 0) <= RECENT);
+    return r.length ? r : newest(list);
+  };
+  const many = ALL.test(ask.text) || (gap && ask.intent === "approve");
   const t = ask.text.toLowerCase();
   const scored = pool.map((d) => {
     const toks = String(d.name || "").toLowerCase().replace(/\([^)]*\)/g, " ").split(/[^a-z0-9#]+/).filter((w) => (w.length >= 4 || /^#\d+$/.test(w)) && !STOP.has(w));
@@ -180,12 +193,9 @@ function draftsFor(ns, gid, ask, { refDraft, gap, multi }) {
     let best = scored.filter((x) => x.n === top).map((x) => x.d);
     // Same name twice (one already approved and waiting): "skip the leaderboard" means the new one.
     if (best.length > 1 && best.some((x) => !x.postAt)) best = best.filter((x) => !x.postAt);
-    if (best.length === 1 || ALL.test(t) || gap) return { list: best, why: "named" };
-    return { list: [], ambiguous: best };
+    return { list: many ? recent(best) : newest(best), why: "named" };
   }
-  if (ALL.test(t) || (gap && ask.intent === "approve")) return { list: pool, why: "all" };
-  if (pool.length <= 1) return { list: pool, why: "only" };
-  return { list: [], ambiguous: pool };
+  return { list: many ? recent(pool) : newest(pool), why: many ? "all" : "newest" };
 }
 
 const stamp = (ms) => `<t:${Math.floor(ms / 1000)}:t> (<t:${Math.floor(ms / 1000)}:R>)`;
@@ -214,12 +224,9 @@ async function modReply(ns, g, d) {
   const done = new Set();
   const lines = [];
   for (const ask of asks) {
-    const { list, ambiguous } = draftsFor(ns, g.guildId, ask, { refDraft, gap, multi });
+    const { list } = draftsFor(ns, g.guildId, ask, { refDraft, gap, multi });
     const todo = list.filter((x) => !done.has(x.id));
-    if (!todo.length) {
-      if (ambiguous?.length) await say(`Which one? ${ambiguous.map((x) => `**${x.name}**`).join(", ")} are waiting. Reply to that draft’s message, name it, or say “${ask.intent === "approve" ? "approve" : "skip"} all”.`);
-      continue;
-    }
+    if (!todo.length) continue;
     todo.forEach((x) => done.add(x.id));
     if (ask.intent === "reject") {
       for (const x of todo) await startJob(ns, "reject", { draftId: x.id, by }, audit.discordActor(by.replace(/ \(in Discord\)$/, ""))).done;
