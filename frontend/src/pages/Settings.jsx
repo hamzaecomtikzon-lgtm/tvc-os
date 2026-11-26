@@ -3,10 +3,11 @@ import { useApp } from "../context/app.js";
 import { api } from "../services/api.js";
 import { auth } from "../services/auth.js";
 import { AUTOS, TIMEZONES } from "../lib/constants.js";
-import { CRMS, SLOTS, autoMatch, baseName, readAvatar, readLogo } from "../lib/setup.js";
+import { CRMS, SLOTS, autoMatch, baseName, loadImage, readAvatar } from "../lib/setup.js";
 import { ago, initials } from "../lib/format.js";
 import { BotAvatar, ChanSelect, Dialog, Ico, PageHead, Sw } from "../components/ui.jsx";
 import CommunityBuilder from "../components/CommunityBuilder.jsx";
+import LogoCropper from "../components/LogoCropper.jsx";
 const TABS = [["workspace", "Workspace", "home"], ["bot", "Bot & server", "server"], ["channels", "Channels", "hash"], ["crm", "CRM & data", "plug"], ["team", "Team", "users"], ["notifications", "Notifications", "bell"], ["billing", "Plan & billing", "card"]];
 const PANELS = { workspace: Workspace, bot: Bot, channels: Channels, crm: Crm, team: Team, notifications: Notifications, billing: Billing };
 
@@ -29,22 +30,71 @@ export default function Settings() {
 }
 
 function Workspace() {
-  const { user, cfg, saveCfg, resetWorkspace, toast, isAdmin } = useApp();
+  const { user, ws, cfg, saveCfg, saveWs, resetWorkspace, toast, isAdmin } = useApp();
   const [name, setName] = useState(user.name);
   const [brand, setBrand] = useState(user.brand);
   const [zone, setZone] = useState(cfg.timezone);
   const [week, setWeek] = useState(cfg.weekStart);
   const [confirm, setConfirm] = useState(false);
+  // The company logo waits here until Save: undefined = unchanged, null = removed, { logo, w, h } = new or re-cropped.
+  const [logoDraft, setLogoDraft] = useState(undefined);
+  const [cropImg, setCropImg] = useState(null);
+  const [colors, setColors] = useState(null);
+  const [saving, setSaving] = useState(false);
   const owner = user.role === "Owner";
-  const save = async () => {
+  const logo = (logoDraft === undefined ? ws.brand?.logo : logoDraft?.logo) || "";
+  const logoChanged = logoDraft !== undefined;
+
+  // Card colors for the logo on screen: read straight from an unsaved logo, or the saved theme.
+  useEffect(() => {
+    let live = true;
+    const ask = logoDraft?.logo ? api("POST", "/brand/preview", { logo: logoDraft.logo }) : logoDraft === null ? Promise.resolve({ source: "no_logo" }) : api("GET", "/brand");
+    ask.then((r) => live && setColors(r)).catch(() => live && setColors(null));
+    return () => { live = false; };
+  }, [logoDraft, ws.brand?.logo]);
+
+  const pick = async (file) => {
     try {
-      await auth.update({ name, brand });
+      setCropImg(await loadImage(file));
     } catch (e) {
-      return toast(e.message);
+      toast(e.message);
     }
-    if (isAdmin && (zone !== cfg.timezone || week !== cfg.weekStart) && !(await saveCfg({ ...cfg, timezone: zone, weekStart: week }, { sync: false }))) return;
-    toast("Saved");
   };
+  const recrop = async () => {
+    try {
+      setCropImg(await loadImage(logo));
+    } catch (e) {
+      toast(e.message);
+    }
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      try {
+        await auth.update({ name, brand });
+      } catch (e) {
+        return toast(e.message);
+      }
+      if (isAdmin && (zone !== cfg.timezone || week !== cfg.weekStart) && !(await saveCfg({ ...cfg, timezone: zone, weekStart: week }, { sync: false }))) return;
+      if (isAdmin && logoChanged) {
+        if (!(await saveWs({ brand: logoDraft }))) return;
+        setLogoDraft(undefined);
+        return toast(logoDraft ? "Saved. New cards use your logo and its colors." : "Saved. Cards are back to the default colors.");
+      }
+      toast("Saved");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const c = colors?.detected || colors?.default || { primary: "#0A9444", secondary: "#D3263A" };
+  const second = c.secondary || c.primary;
+  const note = !logo ? "No logo yet, so cards use the default colors."
+    : colors?.source === "logo" ? "Cards take these colors from your logo automatically."
+    : colors?.source === "no_colors" ? "No clear colors in this logo, so cards use the default colors. A logo with stronger colors works best."
+    : "";
+
   return (
     <>
       <section className="card2">
@@ -53,86 +103,52 @@ function Workspace() {
           <label className="field">Brand name<input className="input" value={brand} disabled={!owner} onChange={(e) => setBrand(e.target.value)} /></label>
           <label className="field">Your name<input className="input" value={name} onChange={(e) => setName(e.target.value)} /></label>
         </div>
+
+        <div className="logo-field">
+          <span>Company logo</span>
+          <div className="logo-up">
+            <div className={"logo-tile" + (logo ? " has" : "")}>{logo ? <img src={logo} alt="Company logo" /> : <Ico name="upload" />}</div>
+            <div className="btns">
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <label className={"btn sm" + (isAdmin ? "" : " disabled")} htmlFor="logo-file"><Ico name="upload" />{logo ? "Change logo" : "Upload logo"}</label>
+                {logo && <button className="btn sm" type="button" disabled={!isAdmin} onClick={recrop}><Ico name="edit" />Crop</button>}
+                {logo && <button className="btn sm ghost" type="button" disabled={!isAdmin} onClick={() => setLogoDraft(null)}>Remove</button>}
+                {logoChanged && <button className="btn sm ghost" type="button" onClick={() => setLogoDraft(undefined)}>Undo</button>}
+              </div>
+              <small>Shown on the winning angle, creator win and leaderboard images, which take their colors from it. Separate from the bot’s picture. PNG with a transparent background works best; you can crop it after picking.</small>
+            </div>
+            <input type="file" id="logo-file" accept="image/png,image/jpeg,image/webp,image/svg+xml" hidden disabled={!isAdmin} onChange={(e) => { const f = e.target.files[0]; e.target.value = ""; if (f) pick(f); }} />
+          </div>
+          <div className="logo-colors" aria-label="Card colors from your logo">
+            <span className="lc-sw"><i style={{ background: c.primary }} />Main {c.primary}</span>
+            <span className="lc-sw"><i style={{ background: second }} />Second {second}</span>
+            <span className="bar" aria-hidden="true"><span style={{ background: c.primary }} /><span style={{ background: "#fff" }} /><span style={{ background: second }} /></span>
+            {note && <small className="muted" style={{ flexBasis: "100%", fontSize: "var(--text-micro)" }}>{note}</small>}
+          </div>
+        </div>
+
         <div className="frow">
           <label className="field">Time zone<select className="input" value={zone} disabled={!isAdmin} onChange={(e) => setZone(e.target.value)}>{TIMEZONES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select><small>Automations run at their set time in this zone.</small></label>
           <label className="field">Week starts on<select className="input" value={week} disabled={!isAdmin} onChange={(e) => setWeek(e.target.value)}><option>Sunday</option><option>Monday</option></select></label>
         </div>
-        <div><button className="btn primary" type="button" onClick={save}>Save changes</button></div>
+        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+          <button className="btn primary" type="button" disabled={saving} onClick={save}>{saving ? "Saving…" : "Save changes"}</button>
+          {logoChanged && <span className="unsaved">{logoDraft ? "New logo not saved yet" : "Logo removal not saved yet"}</span>}
+        </div>
       </section>
-      <CompanyLogo />
       {isAdmin && (
         <section className="card2">
           <div className="h"><h3>Danger zone</h3><p>Deletes this workspace’s settings, automations, drafts, DMs and analytics, and starts setup again. Nothing is removed from Discord, and your account stays.</p></div>
           <div><button className="btn" type="button" style={{ color: "var(--color-danger)" }} onClick={() => setConfirm(true)}>Delete workspace</button></div>
         </section>
       )}
+      {cropImg && <LogoCropper img={cropImg} onClose={() => setCropImg(null)} onDone={(l) => { setLogoDraft(l); setCropImg(null); }} />}
       {confirm && (
         <Dialog title="Delete this workspace?" onClose={() => setConfirm(false)} actions={<><button className="btn" type="button" onClick={() => setConfirm(false)}>Keep it</button><button className="btn primary" type="button" onClick={() => { setConfirm(false); resetWorkspace(); }}>Delete workspace</button></>}>
           <p className="muted" style={{ fontSize: "var(--text-small)" }}>Everything saved for this workspace is deleted and can’t be brought back. Channels and messages in Discord stay as they are.</p>
         </Dialog>
       )}
     </>
-  );
-}
-
-/** The company logo: shown on the generated cards (winning angle, wins, leaderboard), which take their colors from it automatically. Not the bot picture. */
-function CompanyLogo() {
-  const { ws, saveWs, toast, isAdmin } = useApp();
-  const logo = ws.brand?.logo || "";
-  const [info, setInfo] = useState(null);
-  const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    let live = true;
-    api("GET", "/brand").then((r) => live && setInfo(r)).catch(() => live && setInfo(null));
-    return () => { live = false; };
-  }, [logo]);
-  const upload = async (file) => {
-    setBusy(true);
-    try {
-      const brand = await readLogo(file);
-      if (await saveWs({ brand })) toast("Company logo saved. New cards use it and its colors.");
-    } catch (e) {
-      toast(e.message);
-    } finally {
-      setBusy(false);
-    }
-  };
-  const remove = async () => { if (await saveWs({ brand: null })) toast("Company logo removed. Cards use the default colors."); };
-  const c = info?.detected || info?.default || { primary: "#0A9444", secondary: "#D3263A" };
-  const second = c.secondary || c.primary;
-  const note = info?.source === "logo" ? "Colors are taken from your logo automatically. Change the logo and the cards change with it."
-    : logo ? "No clear colors in this logo, so cards use the default palette. A logo with stronger colors works best."
-    : "No company logo yet, so cards use the default palette.";
-  const dot = (color, label) => (
-    <div style={{ display: "flex", gap: 8, alignItems: "center", fontSize: "var(--text-small)" }}>
-      <span style={{ width: 28, height: 28, borderRadius: 8, background: color, border: "1px solid var(--color-border)" }} />
-      <div><div style={{ color: "var(--color-heading)", fontWeight: 500 }}>{label}</div><code style={{ fontSize: "var(--text-micro)" }}>{color}</code></div>
-    </div>
-  );
-  return (
-    <section className="card2">
-      <div className="h"><h3>Company logo</h3><p>Your brand’s logo. The winning angle, creator win and leaderboard images show it and take their colors from it. This is separate from the bot’s picture, which is only the bot’s avatar in Discord.</p></div>
-      <div className="logo-up">
-        <div className={"logo-tile" + (logo ? " has" : "")}>{logo ? <img src={logo} alt="Company logo" /> : <Ico name="upload" />}</div>
-        <div className="btns">
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <label className={"btn sm" + (isAdmin && !busy ? "" : " disabled")} htmlFor="logo-file"><Ico name="upload" />{busy ? "Reading…" : logo ? "Change logo" : "Upload logo"}</label>
-            {logo && <button className="btn sm ghost" type="button" disabled={!isAdmin || busy} onClick={remove}>Remove</button>}
-          </div>
-          <small>PNG with a transparent background works best. JPG, WebP and SVG work too. It’s never cropped.</small>
-        </div>
-        <input type="file" id="logo-file" accept="image/png,image/jpeg,image/webp,image/svg+xml" hidden disabled={!isAdmin || busy} onChange={(e) => { const f = e.target.files[0]; e.target.value = ""; if (f) upload(f); }} />
-      </div>
-      <div style={{ display: "flex", gap: 22, alignItems: "center", flexWrap: "wrap", paddingTop: 4, borderTop: "1px solid var(--color-border)" }}>
-        <span className="sec-t" style={{ margin: 0, flexBasis: "100%", paddingTop: 12 }}>Card colors</span>
-        {dot(c.primary, "Main color")}
-        {dot(second, "Second color")}
-        <div style={{ display: "flex", height: 10, width: 120, borderRadius: 4, overflow: "hidden", border: "1px solid var(--color-border)" }}>
-          <span style={{ flex: 1, background: c.primary }} /><span style={{ flex: 1, background: "#fff" }} /><span style={{ flex: 1, background: second }} />
-        </div>
-      </div>
-      <small className="muted" style={{ fontSize: "var(--text-micro)" }}>{note} Cards already built keep their old look; rebuild a draft to see the new one.</small>
-    </section>
   );
 }
 

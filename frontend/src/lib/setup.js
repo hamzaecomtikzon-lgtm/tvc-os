@@ -46,41 +46,88 @@ export function autoMatch(channels, map = {}, force = false) {
   return next;
 }
 
-/**
- * Read a company logo for the generated cards: never cropped, scaled to fit 400×400, PNG so transparent
- * backgrounds stay transparent (colors are read from the logo itself, not its background).
- * Resolves `{ logo, w, h }`. Very detailed images fall back to JPEG on white to keep the workspace small.
- */
-export function readLogo(file) {
+/** Load a picked file (or a data URL) as an image, with friendly errors. */
+export function loadImage(src) {
   return new Promise((resolve, reject) => {
-    if (file.size > 8 * 1024 * 1024) return reject(new Error("That image is over 8 MB. Use a smaller logo file."));
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("Couldn’t read that file."));
-    reader.onload = () => {
+    const open = (url) => {
       const img = new Image();
       img.onerror = () => reject(new Error("That file isn’t an image we can read. Use a PNG, JPG, WebP or SVG."));
-      img.onload = () => {
-        const iw = img.naturalWidth || 400, ih = img.naturalHeight || 400;
-        const k = Math.min(1, 400 / Math.max(iw, ih));
-        const w = Math.max(1, Math.round(iw * k)), h = Math.max(1, Math.round(ih * k));
-        const c = document.createElement("canvas");
-        c.width = w;
-        c.height = h;
-        const ctx = c.getContext("2d");
-        ctx.drawImage(img, 0, 0, w, h);
-        let logo = c.toDataURL("image/png");
-        if (logo.length > 350_000) {
-          ctx.globalCompositeOperation = "destination-over";
-          ctx.fillStyle = "#fff";
-          ctx.fillRect(0, 0, w, h);
-          logo = c.toDataURL("image/jpeg", 0.9);
-        }
-        resolve({ logo, w, h });
-      };
-      img.src = reader.result;
+      img.onload = () => resolve(img);
+      img.src = url;
     };
-    reader.readAsDataURL(file);
+    if (typeof src === "string") return open(src);
+    if (src.size > 8 * 1024 * 1024) return reject(new Error("That image is over 8 MB. Use a smaller logo file."));
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Couldn’t read that file."));
+    reader.onload = () => open(reader.result);
+    reader.readAsDataURL(src);
   });
+}
+
+/** The image's own size (SVGs without one get 400×400). */
+export const imageSize = (img) => ({ w: img.naturalWidth || 400, h: img.naturalHeight || 400 });
+
+/**
+ * The company logo from an image and an optional crop `{ x, y, w, h }` (in the image's pixels): scaled to fit
+ * 400×400, never stretched, PNG so transparent backgrounds stay transparent (very detailed images fall back
+ * to JPEG on white to keep the workspace small). Resolves `{ logo, w, h }`.
+ */
+export function logoFromImage(img, crop) {
+  const { w: iw, h: ih } = imageSize(img);
+  const r = crop || { x: 0, y: 0, w: iw, h: ih };
+  const k = Math.min(1, 400 / Math.max(r.w, r.h));
+  const w = Math.max(1, Math.round(r.w * k)), h = Math.max(1, Math.round(r.h * k));
+  const c = document.createElement("canvas");
+  c.width = w;
+  c.height = h;
+  const ctx = c.getContext("2d");
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(img, r.x, r.y, r.w, r.h, 0, 0, w, h);
+  let logo = c.toDataURL("image/png");
+  if (logo.length > 350_000) {
+    ctx.globalCompositeOperation = "destination-over";
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, w, h);
+    logo = c.toDataURL("image/jpeg", 0.9);
+  }
+  return { logo, w, h };
+}
+
+/**
+ * The part of the image that isn't empty: transparent or near-white edges trimmed away, with a little
+ * breathing room. Returns a crop `{ x, y, w, h }` in the image's pixels (the whole image if nothing to trim).
+ */
+export function contentBounds(img) {
+  const { w: iw, h: ih } = imageSize(img);
+  const k = Math.min(1, 300 / Math.max(iw, ih)); // scan a small copy: fast, and precise enough for a crop box
+  const w = Math.max(1, Math.round(iw * k)), h = Math.max(1, Math.round(ih * k));
+  const c = document.createElement("canvas");
+  c.width = w;
+  c.height = h;
+  const ctx = c.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(img, 0, 0, w, h);
+  let px;
+  try {
+    px = ctx.getImageData(0, 0, w, h).data;
+  } catch {
+    return { x: 0, y: 0, w: iw, h: ih };
+  }
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      const empty = px[i + 3] < 24 || (px[i] > 242 && px[i + 1] > 242 && px[i + 2] > 242);
+      if (empty) continue;
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+    }
+  }
+  if (x1 < 0) return { x: 0, y: 0, w: iw, h: ih };
+  const pad = Math.round(Math.max(x1 - x0, y1 - y0) * 0.04);
+  x0 = Math.max(0, x0 - pad); y0 = Math.max(0, y0 - pad); x1 = Math.min(w - 1, x1 + pad); y1 = Math.min(h - 1, y1 + pad);
+  return { x: Math.round(x0 / k), y: Math.round(y0 / k), w: Math.min(iw, Math.round((x1 - x0 + 1) / k)), h: Math.min(ih, Math.round((y1 - y0 + 1) / k)) };
 }
 
 /** Resize a picked image to a 160px square JPEG data URL. */

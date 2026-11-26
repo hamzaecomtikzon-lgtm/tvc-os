@@ -215,6 +215,13 @@ async function route(req, res) {
     const { detected, source } = brandInfo(store.get(ns, "workspace/main") || {});
     return send(res, 200, { detected, source, default: { primary: DEFAULT_THEME.green, secondary: DEFAULT_THEME.red } });
   }
+  // The colors a logo would give the cards, before it's saved (the Workspace preview).
+  if (p === "/api/brand/preview" && m === "POST") {
+    const { logo } = await readJson(req);
+    if (typeof logo !== "string" || !/^data:image\/(png|jpeg);base64,/.test(logo)) throw fail(400, "Send a PNG or JPEG logo.", "bad_request", "logo");
+    const { detected, source } = brandInfo({ brand: { logo } });
+    return send(res, 200, { detected, source, default: { primary: DEFAULT_THEME.green, secondary: DEFAULT_THEME.red } });
+  }
 
   // AI Community Builder: design a server layout from a description of the community.
   if (p === "/api/ai/community" && m === "POST") {

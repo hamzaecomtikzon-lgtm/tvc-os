@@ -731,10 +731,38 @@ select.input { appearance: none; background-image: linear-gradient(45deg, transp
 @media (max-width: 560px) { .al-filters { grid-template-columns: 1fr; } }
 
 /* Company logo (Settings → Workspace) */
+.logo-field { display: grid; gap: 8px; font-size: var(--text-small); font-weight: 500; color: var(--color-heading); }
 .logo-up { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
-.logo-tile { width: 132px; height: 80px; border-radius: var(--radius-xl); border: 1px dashed var(--color-border-strong); background: #fff; display: grid; place-items: center; padding: 10px; color: var(--color-text-subtle); flex: none; }
+.logo-tile { width: 150px; height: 90px; border-radius: var(--radius-xl); border: 1px dashed var(--color-border-strong); background: #fff; display: flex; align-items: center; justify-content: center; padding: 10px; color: var(--color-text-subtle); flex: none; overflow: hidden; }
 .logo-tile.has { border-style: solid; border-color: var(--color-border); }
-.logo-tile img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+.logo-tile img { max-width: 130px; max-height: 70px; width: auto; height: auto; object-fit: contain; display: block; }
 .logo-tile .ico { width: 22px; height: 22px; }
-.logo-up .btns { display: grid; gap: 6px; min-width: 0; flex: 1 1 220px; }
-.logo-up .btns small { font-size: var(--text-micro); color: var(--color-text-muted); }
+.logo-up .btns { display: grid; gap: 6px; min-width: 0; flex: 1 1 240px; }
+.logo-up .btns small { font-size: var(--text-micro); color: var(--color-text-muted); font-weight: 400; }
+.logo-colors { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; font-weight: 400; }
+.logo-colors .lc-sw { display: flex; gap: 8px; align-items: center; font-size: var(--text-micro); color: var(--color-text-muted); }
+.logo-colors .lc-sw i { width: 22px; height: 22px; flex: none; border-radius: 6px; border: 1px solid var(--color-border); display: block; }
+.logo-colors .bar { display: flex; height: 8px; width: 96px; border-radius: 4px; overflow: hidden; border: 1px solid var(--color-border); }
+.logo-colors .bar span { flex: 1; }
+.unsaved { font-size: var(--text-micro); color: var(--color-primary); font-weight: 500; }
+
+/* Logo cropper */
+.modal:has(.crop) { max-width: 640px; }
+.crop { display: grid; gap: 12px; min-width: 0; }
+.crop-shapes { display: flex; gap: 6px; flex-wrap: wrap; }
+.crop-wrap { display: flex; justify-content: center; min-width: 0; padding: 8px 0; }
+.crop-stage { position: relative; touch-action: none; user-select: none; overflow: hidden; border-radius: 6px;
+  background: repeating-conic-gradient(#e9e9ec 0% 25%, #ffffff 0% 50%) 0 0 / 16px 16px; }
+.crop-stage img { display: block; pointer-events: none; }
+.crop-box { position: absolute; cursor: move; outline: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,0.35), 0 0 0 9999px rgba(15, 17, 26, 0.55); }
+.crop-grid { position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(to right, transparent 33.2%, rgba(255,255,255,0.5) 33.3%, rgba(255,255,255,0.5) 33.6%, transparent 33.7%, transparent 66.5%, rgba(255,255,255,0.5) 66.6%, rgba(255,255,255,0.5) 66.9%, transparent 67%),
+              linear-gradient(to bottom, transparent 33.2%, rgba(255,255,255,0.5) 33.3%, rgba(255,255,255,0.5) 33.6%, transparent 33.7%, transparent 66.5%, rgba(255,255,255,0.5) 66.6%, rgba(255,255,255,0.5) 66.9%, transparent 67%); }
+.crop-h { position: absolute; width: 14px; height: 14px; background: #fff; border: 1px solid rgba(0,0,0,0.45); border-radius: 3px; transform: translate(-50%, -50%); }
+.crop-h.nw { left: 0; top: 0; cursor: nwse-resize; } .crop-h.se { left: 100%; top: 100%; cursor: nwse-resize; }
+.crop-h.ne { left: 100%; top: 0; cursor: nesw-resize; } .crop-h.sw { left: 0; top: 100%; cursor: nesw-resize; }
+.crop-h.n { left: 50%; top: 0; cursor: ns-resize; } .crop-h.s { left: 50%; top: 100%; cursor: ns-resize; }
+.crop-h.e { left: 100%; top: 50%; cursor: ew-resize; } .crop-h.w { left: 0; top: 50%; cursor: ew-resize; }
+@media (pointer: coarse) { .crop-h { width: 22px; height: 22px; } }
+.crop-tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.crop-tools .muted { font-size: var(--text-micro); flex-basis: 100%; }
