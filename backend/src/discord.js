@@ -12,8 +12,6 @@ const INVITE_PERMISSIONS = "335793232";
 const TEXT_TYPES = [0, 5]; // text, announcement
 const CATEGORY = 4;
 
-const token = () => (process.env.DISCORD_BOT_TOKEN || "").trim();
-
 export class DiscordError extends Error {
   constructor(message, status, code) {
     super(message);
@@ -22,8 +20,19 @@ export class DiscordError extends Error {
   }
 }
 
+/** Channel name without its emoji prefix: "🏆・share-wins" → "share-wins". */
+const baseName = (n) => String(n).replace(/^.*・/, "").replace(/^[^a-z0-9]+/i, "").toLowerCase();
+
+/**
+ * One Discord bot client. Each client has its own token (read from the env var `tokenVar`), its own
+ * cached identity and its own rate-limit retries, so two bots (the brand bot and the official KREO
+ * bot) never share state. `invitePermissions` is what the "add to server" link asks for.
+ */
+export function createDiscord({ tokenVar = "DISCORD_BOT_TOKEN", clientIdVar = null, invitePermissions = INVITE_PERMISSIONS } = {}) {
+const token = () => (process.env[tokenVar] || "").trim();
+
 async function call(method, path, body) {
-  if (!token()) throw new DiscordError("The Discord bot token isn’t set. Add DISCORD_BOT_TOKEN to backend/.env and restart the server.", 503, "not_configured");
+  if (!token()) throw new DiscordError(`The Discord bot token isn’t set. Add ${tokenVar} to backend/.env and restart the server.`, 503, "not_configured");
   for (let attempt = 0; ; attempt++) {
     // A FormData body (file uploads) sets its own multipart Content-Type.
     const form = body instanceof FormData;
@@ -40,7 +49,7 @@ async function call(method, path, body) {
     if (res.status === 204) return null;
     const data = await res.json().catch(() => null);
     if (res.ok) return data;
-    if (res.status === 401) throw new DiscordError("Discord rejected the bot token. Check DISCORD_BOT_TOKEN in backend/.env.", 401, "bad_token");
+    if (res.status === 401) throw new DiscordError(`Discord rejected the bot token. Check ${tokenVar} in backend/.env.`, 401, "bad_token");
     throw new DiscordError(data?.message || "Discord error " + res.status, res.status, data?.code);
   }
 }
@@ -73,10 +82,7 @@ function permsIn(guild, member, channel) {
   return p;
 }
 
-/** Channel name without its emoji prefix: "🏆・share-wins" → "share-wins". */
-const baseName = (n) => String(n).replace(/^.*・/, "").replace(/^[^a-z0-9]+/i, "").toLowerCase();
-
-export const discord = {
+const client = {
   configured: () => !!token(),
 
   /** Who the bot is, and the link that adds it to a server. */
@@ -84,10 +90,11 @@ export const discord = {
     if (!token()) return { configured: false };
     try {
       const u = await self();
+      const appId = (clientIdVar && (process.env[clientIdVar] || "").trim()) || u.id; // a bot's user id is its application id
       return {
         configured: true,
-        bot: { id: u.id, name: u.global_name || u.username },
-        inviteUrl: `https://discord.com/oauth2/authorize?client_id=${u.id}&permissions=${INVITE_PERMISSIONS}&scope=bot%20applications.commands`,
+        bot: { id: u.id, name: u.global_name || u.username, avatar: u.avatar ? `https://cdn.discordapp.com/avatars/${u.id}/${u.avatar}.png?size=128` : null },
+        inviteUrl: `https://discord.com/oauth2/authorize?client_id=${appId}&permissions=${invitePermissions}&scope=bot%20applications.commands`,
       };
     } catch (e) {
       return { configured: false, error: e.message };
@@ -212,7 +219,7 @@ export const discord = {
   /** Send a direct message to a member. Returns `{ channelId, message }`. */
   async dm(userId, text) {
     const ch = await call("POST", "/users/@me/channels", { recipient_id: userId });
-    return { channelId: ch.id, message: await discord.send(ch.id, text) };
+    return { channelId: ch.id, message: await client.send(ch.id, text) };
   },
 
   /** Add the bot's reaction to a message. Failures are ignored: a missing reaction never blocks a post. */
@@ -276,7 +283,16 @@ export const discord = {
   },
 
   token,
+  /** Low-level REST call with this bot's token (for things the helpers above don't cover). */
+  call,
+  /** Forget the cached identity (after the token changes). */
+  reset() { me = null; },
 };
+return client;
+}
+
+/** The brand bot: each workspace's community bot (DISCORD_BOT_TOKEN). */
+export const discord = createDiscord();
 
 /** A guild member as the app stores it. */
 export function memberRow(m, roleNames = {}) {

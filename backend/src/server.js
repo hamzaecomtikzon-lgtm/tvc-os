@@ -9,6 +9,7 @@
  *   POST /api/requests                           ask the bot to do something (see jobs.js)
  *   POST /api/crm/<tool>                         CRM data (see crm.js)
  *   GET  /api/media/<id>.png                     a generated card image (public, unguessable id)
+ *   /api/kreo/*                                  the official KREO bot (platform admins only, see kreo.js)
  */
 import "./env.js";
 import { createServer } from "node:http";
@@ -23,6 +24,7 @@ import { onEvent } from "./bot.js";
 import { ai } from "./ai.js";
 import { DEFAULT_THEME, brandInfo } from "./brandTheme.js";
 import * as audit from "./audit.js";
+import { isPlatformAdmin, kreoRoute, onKreoEvent, startKreo } from "./kreo.js";
 
 /** Record a sign-in or sign-up in the workspace's audit log, then hand the user back. `action` is auth.signin, auth.signup or auth.join. */
 function signedIn(user, action, label, how) {
@@ -134,6 +136,11 @@ async function route(req, res) {
     await onEvent(type, data);
     return send(res, 200, {});
   }
+  if (process.env.KREO_TEST_EVENTS === "1" && p === "/api/_test/kreo-event" && m === "POST") {
+    const { type, data } = await readJson(req);
+    await onKreoEvent(type, data);
+    return send(res, 200, {});
+  }
 
   const user = auth.user(req);
   if (!user) throw fail(401, "Sign in first.", "signed_out");
@@ -143,6 +150,9 @@ async function route(req, res) {
   const needAdmin = () => { if (!admin) throw fail(403, "Your role can’t change this. Ask the workspace owner.", "forbidden"); };
   const me = audit.actorOf(user);
   const record = (e) => audit.log(ns, me, e);
+
+  // The official KREO bot: separate from the brand bot, controlled by the platform admins only.
+  if (p.startsWith("/api/kreo/")) return send(res, 200, await kreoRoute({ p, m, user, readJson: () => readJson(req) }));
 
   // Audit log: who did what, and when. Owners and admins only.
   if (p === "/api/audit" && m === "GET") {
@@ -163,7 +173,7 @@ async function route(req, res) {
     return send(res, 200, { entries, next: page.next, categories: audit.CATEGORIES, ...(f ? { ...f, shops: f.shops.map(shopOf) } : {}) });
   }
 
-  if (p === "/api/config" && m === "GET") return send(res, 200, { discord: await discord.info(), gateway: gateway.status, ai: ai.configured(), crm: crmSource(ns), crmConnection: crmKeys.info(ns) });
+  if (p === "/api/config" && m === "GET") return send(res, 200, { discord: await discord.info(), gateway: gateway.status, ai: ai.configured(), crm: crmSource(ns), crmConnection: crmKeys.info(ns), platformAdmin: isPlatformAdmin(user) });
 
   // The workspace's own CRM key. The key goes in once and never comes back out: reads return only its last 4 characters.
   if (p === "/api/crm-connection" && m === "GET") return send(res, 200, { connection: crmKeys.info(ns), source: crmSource(ns) });
@@ -352,5 +362,7 @@ gateway.start(onEvent).then((started) => {
   const g = gateway.status;
   console.log(g.error ? `Discord live events: ${g.error}` : `Discord live events: on (member joins: ${g.members ? "yes" : "no, Server Members Intent is off"}; message text: ${g.content ? "yes" : "no, Message Content Intent is off"})`);
 });
+// The official KREO bot connects on its own; it never waits for, or stops, the brand bot.
+startKreo();
 // Bring each workspace's channels and member list up to date.
 if (discord.configured()) for (const { ns, ws } of store.workspaces()) if (ws.guildId) startJob(ns, "sync");
