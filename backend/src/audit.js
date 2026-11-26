@@ -51,7 +51,7 @@ export const ACTIONS = {
   "custom.create": "Created custom automation", "custom.edit": "Edited custom automation", "custom.delete": "Deleted custom automation",
   "settings.edit": "Changed settings", "scoring.edit": "Changed scoring", "channels.map": "Changed channel mapping", "shop.switch": "Switched shop",
   "onboarding.edit": "Edited onboarding",
-  "bot.picture": "Changed bot picture", "bot.rename": "Renamed bot", "bot.profile_warning": "Bot profile warning",
+  "bot.picture": "Changed bot picture", "brand.logo": "Changed company logo", "bot.rename": "Renamed bot", "bot.profile_warning": "Bot profile warning",
   "discord.connect": "Connected Discord server", "server.sync": "Refreshed server", "channels.create": "Created channels", "channels.create_failed": "Channel creation failed",
   "draft.build": "Built draft", "draft.build_failed": "Draft build failed", "draft.nothing": "Ran automation", "draft.edit": "Edited draft", "draft.delete": "Deleted draft",
   "draft.post": "Posted draft", "draft.post_failed": "Post failed", "draft.reject": "Rejected draft", "draft.test": "Sent test post",
@@ -224,7 +224,9 @@ export function describeDoc(ns, path, before, after) {
     if (!before) return out;
     const b0 = before.bot || {}, b1 = after?.bot || {};
     const botName = b1.name || b0.name || "Bot";
-    if ((b0.avatar || "") !== (b1.avatar || "")) out.push({ category: "bot", action: "bot.picture", label: botName, summary: b1.avatar ? (b0.avatar ? "Changed the bot picture (the logo on cards changes too)" : "Added a bot picture (used as the logo on cards)") : "Removed the bot picture" });
+    if ((b0.avatar || "") !== (b1.avatar || "")) out.push({ category: "bot", action: "bot.picture", label: botName, summary: b1.avatar ? (b0.avatar ? "Changed the bot picture" : "Added a bot picture") : "Removed the bot picture" });
+    const l0 = before.brand?.logo || "", l1 = after?.brand?.logo || "";
+    if (l0 !== l1) out.push({ category: "settings", action: "brand.logo", label: l1 ? "Company logo" : "Company logo (removed)", summary: l1 ? (l0 ? "Changed the company logo. Generated cards now use the new logo and its colors" : "Added the company logo. Generated cards now use it and its colors") : "Removed the company logo. Generated cards are back to the default colors" });
     if ((b0.name || "") !== (b1.name || "") && b1.name) out.push({ category: "bot", action: "bot.rename", label: b1.name, summary: `Renamed the bot from “${b0.name || "Bot"}” to “${b1.name}”` });
     if (before.guildId !== after?.guildId && after?.guildId) {
       const server = store.get(ns, "discord/" + after.guildId)?.guildName || after.guildId;

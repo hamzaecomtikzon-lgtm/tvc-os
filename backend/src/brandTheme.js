@@ -1,13 +1,13 @@
 /*
- * The brand look for generated cards: the workspace's logo (its uploaded company
- * picture) and a palette taken from that logo automatically.
+ * The brand look for generated cards: the workspace's company logo (Settings → Workspace,
+ * kept apart from the bot's picture) and a palette taken from it automatically.
  * Without a usable logo, cards keep the default palette.
  */
 import { Resvg } from "@resvg/resvg-js";
 
 /** The default palette (also the shape of every theme). */
 export const DEFAULT_THEME = {
-  logo: "", bg: "#F1F2F5", card: "#FFFFFF", line: "#E3E5EB", ink: "#1E2549", muted: "#6B7090",
+  logo: "", logoAspect: 1, bg: "#F1F2F5", card: "#FFFFFF", line: "#E3E5EB", ink: "#1E2549", muted: "#6B7090",
   green: "#0A9444", greenBg: "#E7F4EC", red: "#D3263A", redBg: "#FBEAEC", track: "#EEF0F4",
   stripe: ["#0A9444", "#FFFFFF", "#D3263A"], onInk: "#7FD4A0", onInkSoft: "#C5C9DD", ring: "#4CB476", ringSoft: "#CFEBDB", ring2: "#6F8A84", ring2Soft: "#D9DCE8",
   night: { bg: "#1C2350", bg2: "#232B5E", line: "#38417A", soft: "#AEB4D6", face: "#8C93BF" },
@@ -91,13 +91,13 @@ export function colorsFromLogo(dataUrl) {
 }
 
 /** Every token the cards use, built from a brand's primary (and optional secondary) color. */
-export function themeFrom({ primary, secondary }, logo = "") {
+export function themeFrom({ primary, secondary }, logo = "", logoAspect = 1) {
   const p = readable(primary);
   const s = secondary ? readable(secondary) : readable(mix(primary, "#000000", 0.45));
   const ink = mix(p, "#12141C", 0.88);
   const nightBg = mix(p, "#0B0D16", 0.84);
   return {
-    ...DEFAULT_THEME, logo,
+    ...DEFAULT_THEME, logo, logoAspect,
     ink, muted: mix(ink, "#FFFFFF", 0.42),
     green: p, greenBg: mix(p, "#FFFFFF", 0.89), red: s, redBg: mix(s, "#FFFFFF", 0.9),
     stripe: [p, "#FFFFFF", s], onInk: mix(p, "#FFFFFF", 0.55), onInkSoft: mix(ink, "#FFFFFF", 0.78),
@@ -108,19 +108,25 @@ export function themeFrom({ primary, secondary }, logo = "") {
 
 const cache = new Map(); // logo → colors, so a logo is only read once
 
-/** The workspace's logo (its uploaded company picture) and the colors read from it. Fully automatic: nothing is picked by hand. */
+/**
+ * The workspace's company logo and the colors read from it. Fully automatic: nothing is picked by hand.
+ * Only the company logo (`ws.brand.logo`, Settings → Workspace) counts; the bot's picture is just its Discord avatar.
+ */
 export function brandInfo(ws = {}) {
-  const logo = typeof ws.bot?.avatar === "string" && ws.bot.avatar.startsWith("data:image/") ? ws.bot.avatar : "";
+  const b = ws.brand || {};
+  const logo = typeof b.logo === "string" && /^data:image\/(png|jpeg);base64,/.test(b.logo) ? b.logo : "";
+  // Width ÷ height, so wide and tall logos keep their shape on the cards.
+  const logoAspect = logo && b.w > 0 && b.h > 0 ? Math.min(4, Math.max(0.5, b.w / b.h)) : 1;
   if (logo && !cache.has(logo)) {
     if (cache.size > 200) cache.clear();
     cache.set(logo, colorsFromLogo(logo));
   }
   const detected = (logo && cache.get(logo)) || null;
-  return { logo, detected, source: detected ? "logo" : logo ? "no_colors" : "no_logo" };
+  return { logo, logoAspect, detected, source: detected ? "logo" : logo ? "no_colors" : "no_logo" };
 }
 
-/** The theme for a workspace document: the logo's colors, or the default palette when there is no usable logo. */
+/** The theme for a workspace document: the company logo's colors, or the default palette when there is no usable logo. */
 export function brandTheme(ws = {}) {
-  const { logo, detected } = brandInfo(ws);
-  return detected ? themeFrom(detected, logo) : { ...DEFAULT_THEME, logo };
+  const { logo, logoAspect, detected } = brandInfo(ws);
+  return detected ? themeFrom(detected, logo, logoAspect) : { ...DEFAULT_THEME, logo, logoAspect };
 }

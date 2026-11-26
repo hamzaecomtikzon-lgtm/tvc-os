@@ -48,9 +48,18 @@ const bars = (C, height, mid = C.stripe[1], style = {}) =>
   box({ width: "100%", height, ...style }, box({ flex: 1, background: C.stripe[0] }), box({ flex: 1, background: mid }), box({ flex: 1, background: C.stripe[2] }));
 const stripe = (C) => bars(C, 10);
 
-/** The brand's logo (its uploaded company picture), or nothing when there isn't one. */
-const logo = (C, size, style = {}) =>
-  C.logo ? { type: "img", props: { src: C.logo, width: size, height: size, style: { width: size, height: size, borderRadius: Math.round(size * 0.24), objectFit: "cover", ...style } } } : null;
+/**
+ * The company logo (Settings → Workspace), or nothing when there isn't one. It sits on a white tile at its own
+ * shape (wide logos stay wide, nothing is cropped), so dark logos still show on the dark leaderboard.
+ */
+function logo(C, size, style = {}) {
+  if (!C.logo) return null;
+  const pad = Math.round(size * 0.12);
+  const h = size - pad * 2;
+  const w = Math.round(h * (C.logoAspect || 1));
+  return box({ background: "#FFFFFF", borderRadius: Math.round(size * 0.24), padding: pad, alignItems: "center", justifyContent: "center", flexShrink: 0, ...style },
+    { type: "img", props: { src: C.logo, width: w, height: h, style: { width: w, height: h, objectFit: "contain" } } });
+}
 
 /** Logo, then the brand name underlined in the brand's colors. */
 const brandMark = (C, brand, { size, font, color = C.ink, underline, mid }) =>

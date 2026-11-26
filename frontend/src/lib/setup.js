@@ -46,6 +46,43 @@ export function autoMatch(channels, map = {}, force = false) {
   return next;
 }
 
+/**
+ * Read a company logo for the generated cards: never cropped, scaled to fit 400×400, PNG so transparent
+ * backgrounds stay transparent (colors are read from the logo itself, not its background).
+ * Resolves `{ logo, w, h }`. Very detailed images fall back to JPEG on white to keep the workspace small.
+ */
+export function readLogo(file) {
+  return new Promise((resolve, reject) => {
+    if (file.size > 8 * 1024 * 1024) return reject(new Error("That image is over 8 MB. Use a smaller logo file."));
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Couldn’t read that file."));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("That file isn’t an image we can read. Use a PNG, JPG, WebP or SVG."));
+      img.onload = () => {
+        const iw = img.naturalWidth || 400, ih = img.naturalHeight || 400;
+        const k = Math.min(1, 400 / Math.max(iw, ih));
+        const w = Math.max(1, Math.round(iw * k)), h = Math.max(1, Math.round(ih * k));
+        const c = document.createElement("canvas");
+        c.width = w;
+        c.height = h;
+        const ctx = c.getContext("2d");
+        ctx.drawImage(img, 0, 0, w, h);
+        let logo = c.toDataURL("image/png");
+        if (logo.length > 350_000) {
+          ctx.globalCompositeOperation = "destination-over";
+          ctx.fillStyle = "#fff";
+          ctx.fillRect(0, 0, w, h);
+          logo = c.toDataURL("image/jpeg", 0.9);
+        }
+        resolve({ logo, w, h });
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 /** Resize a picked image to a 160px square JPEG data URL. */
 export function readAvatar(file) {
   return new Promise((resolve, reject) => {

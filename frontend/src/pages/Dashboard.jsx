@@ -22,7 +22,7 @@ function comingUp(autos, customs) {
 }
 
 export default function Dashboard() {
-  const { user, guild, shop, range, money, autos, customs, drafts, dms, botAvatar, crmName, crmLive, chName, saveAutos, saveCustom, go, openCreator, toast, canEdit } = useApp();
+  const { user, ws, guild, shop, range, money, autos, customs, drafts, dms, botAvatar, crmName, crmLive, chName, saveAutos, saveCustom, go, openCreator, toast, canEdit } = useApp();
   const stats = useCruva("getShopStats", { shop_id: shop?.id, date_from: range.from, date_to: range.to, stats: STATS, include_charts: true }, !!shop);
   const { rows } = useCreators();
   const { M, members, tracking } = useCommunity();
@@ -34,6 +34,7 @@ export default function Dashboard() {
     ...pending.map((p) => ({ i: "check", t: p.name, s: p.channelName ? "#" + p.channelName : "No channel", tag: "Approve", on: () => go("approvals", { ap: "pending" }) })),
     ...needs.slice(0, 2).map((m) => ({ i: "chat", b: 1, t: "Reply to " + m.name, s: m.msgs[m.msgs.length - 1]?.text.slice(0, 60), tag: "DM", on: () => go("onboarding", { ob: "inbox", dm: m.userId }) })),
     ...(botAvatar ? [] : [{ i: "upload", b: 1, t: "Add a picture for your bot", s: "Posts show a letter until you do", tag: "Setup", on: () => go("workspace", { set: "bot" }) }]),
+    ...(ws.brand?.logo ? [] : [{ i: "upload", b: 1, t: "Upload your company logo", s: "Winning angle, wins and leaderboard images use its colors", tag: "Brand", on: () => go("workspace", { set: "workspace" }) }]),
   ];
   const top = rows.filter((r) => r.gmv > 0).slice(0, 5);
   const series = d ? d.total_gmv.series.map((p, i) => ({ date: p.date, gmv: p.v, aff: d.affiliate_gmv.series[i]?.v || 0 })) : [];

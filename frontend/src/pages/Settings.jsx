@@ -3,7 +3,7 @@ import { useApp } from "../context/app.js";
 import { api } from "../services/api.js";
 import { auth } from "../services/auth.js";
 import { AUTOS, TIMEZONES } from "../lib/constants.js";
-import { CRMS, SLOTS, autoMatch, baseName, readAvatar } from "../lib/setup.js";
+import { CRMS, SLOTS, autoMatch, baseName, readAvatar, readLogo } from "../lib/setup.js";
 import { ago, initials } from "../lib/format.js";
 import { BotAvatar, ChanSelect, Dialog, Ico, PageHead, Sw } from "../components/ui.jsx";
 import CommunityBuilder from "../components/CommunityBuilder.jsx";
@@ -59,6 +59,7 @@ function Workspace() {
         </div>
         <div><button className="btn primary" type="button" onClick={save}>Save changes</button></div>
       </section>
+      <CompanyLogo />
       {isAdmin && (
         <section className="card2">
           <div className="h"><h3>Danger zone</h3><p>Deletes this workspace’s settings, automations, drafts, DMs and analytics, and starts setup again. Nothing is removed from Discord, and your account stays.</p></div>
@@ -74,20 +75,34 @@ function Workspace() {
   );
 }
 
-/** The logo and colors used on generated cards (winning angle, wins, leaderboard). Read automatically from the bot picture; nothing to pick. */
-function BrandColors() {
-  const { botAvatar } = useApp();
+/** The company logo: shown on the generated cards (winning angle, wins, leaderboard), which take their colors from it automatically. Not the bot picture. */
+function CompanyLogo() {
+  const { ws, saveWs, toast, isAdmin } = useApp();
+  const logo = ws.brand?.logo || "";
   const [info, setInfo] = useState(null);
+  const [busy, setBusy] = useState(false);
   useEffect(() => {
     let live = true;
     api("GET", "/brand").then((r) => live && setInfo(r)).catch(() => live && setInfo(null));
     return () => { live = false; };
-  }, [botAvatar]);
+  }, [logo]);
+  const upload = async (file) => {
+    setBusy(true);
+    try {
+      const brand = await readLogo(file);
+      if (await saveWs({ brand })) toast("Company logo saved. New cards use it and its colors.");
+    } catch (e) {
+      toast(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const remove = async () => { if (await saveWs({ brand: null })) toast("Company logo removed. Cards use the default colors."); };
   const c = info?.detected || info?.default || { primary: "#0A9444", secondary: "#D3263A" };
   const second = c.secondary || c.primary;
-  const note = info?.source === "logo" ? "Colors are taken from your picture automatically. Change the picture and the theme changes with it."
-    : botAvatar ? "No clear colors in your picture, so cards use the default palette. A logo with stronger colors works best."
-    : "Upload your company logo as the bot picture above and the cards take its colors automatically.";
+  const note = info?.source === "logo" ? "Colors are taken from your logo automatically. Change the logo and the cards change with it."
+    : logo ? "No clear colors in this logo, so cards use the default palette. A logo with stronger colors works best."
+    : "No company logo yet, so cards use the default palette.";
   const dot = (color, label) => (
     <div style={{ display: "flex", gap: 8, alignItems: "center", fontSize: "var(--text-small)" }}>
       <span style={{ width: 28, height: 28, borderRadius: 8, background: color, border: "1px solid var(--color-border)" }} />
@@ -96,9 +111,20 @@ function BrandColors() {
   );
   return (
     <section className="card2">
-      <div className="h"><h3>Brand look on cards</h3><p>The winning angle, creator win and leaderboard images use your logo and its colors.</p></div>
-      <div style={{ display: "flex", gap: 22, alignItems: "center", flexWrap: "wrap" }}>
-        <div className="bav" style={{ width: 56, height: 56, fontSize: 22, borderRadius: 14, overflow: "hidden" }}><BotAvatar /></div>
+      <div className="h"><h3>Company logo</h3><p>Your brand’s logo. The winning angle, creator win and leaderboard images show it and take their colors from it. This is separate from the bot’s picture, which is only the bot’s avatar in Discord.</p></div>
+      <div className="logo-up">
+        <div className={"logo-tile" + (logo ? " has" : "")}>{logo ? <img src={logo} alt="Company logo" /> : <Ico name="upload" />}</div>
+        <div className="btns">
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <label className={"btn sm" + (isAdmin && !busy ? "" : " disabled")} htmlFor="logo-file"><Ico name="upload" />{busy ? "Reading…" : logo ? "Change logo" : "Upload logo"}</label>
+            {logo && <button className="btn sm ghost" type="button" disabled={!isAdmin || busy} onClick={remove}>Remove</button>}
+          </div>
+          <small>PNG with a transparent background works best. JPG, WebP and SVG work too. It’s never cropped.</small>
+        </div>
+        <input type="file" id="logo-file" accept="image/png,image/jpeg,image/webp,image/svg+xml" hidden disabled={!isAdmin || busy} onChange={(e) => { const f = e.target.files[0]; e.target.value = ""; if (f) upload(f); }} />
+      </div>
+      <div style={{ display: "flex", gap: 22, alignItems: "center", flexWrap: "wrap", paddingTop: 4, borderTop: "1px solid var(--color-border)" }}>
+        <span className="sec-t" style={{ margin: 0, flexBasis: "100%", paddingTop: 12 }}>Card colors</span>
         {dot(c.primary, "Main color")}
         {dot(second, "Second color")}
         <div style={{ display: "flex", height: 10, width: 120, borderRadius: 4, overflow: "hidden", border: "1px solid var(--color-border)" }}>
@@ -176,7 +202,6 @@ function Bot() {
         <label className="field">Bot name<input className="input" value={name} maxLength={32} disabled={!isAdmin} onChange={(e) => setName(e.target.value)} /><small>Set as the bot’s nickname in your server. Discord only lets some bots have a per-server picture; if yours can’t, the picture shows here and in previews only.</small></label>
         <div><button className="btn primary" type="button" disabled={!isAdmin || !!busy} onClick={() => apply({})}>{busy === "save" ? "Saving…" : "Save"}</button></div>
       </section>
-      <BrandColors />
       <section className="card2">
         <div className="h"><h3>Discord server</h3><div className="r"><button className="btn sm" type="button" disabled={!isAdmin || !!busy} onClick={sync}><Ico name="redo" />{busy === "sync" ? "Refreshing…" : "Refresh"}</button></div></div>
         <div className="dl">

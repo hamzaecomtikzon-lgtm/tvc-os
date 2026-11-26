@@ -97,7 +97,7 @@ async function analyse(shop, s, v, ads, $) {
   };
 }
 
-/** The logo and colors this workspace's cards are drawn in (from its uploaded company picture). */
+/** The logo and colors this workspace's cards are drawn in (from its company logo, not the bot picture). */
 const themeFor = (ns) => brandTheme(store.get(ns, "workspace/main") || {});
 
 const mediaUrl = (ns, png) => `/api/media/${store.putMedia(ns, png)}.png`;
