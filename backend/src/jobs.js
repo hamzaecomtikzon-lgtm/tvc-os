@@ -101,31 +101,80 @@ async function announceDraft(ns, g, id) {
   const where = d.channel === "dm" ? "a DM to each creator" : d.channel ? `<#${d.channel}>` : "no channel (role changes only)";
   // The full post as the channel will get it (cards included), then the approve/reject prompt.
   let msg = null;
+  const ids = []; // every message of this review, so a typed reply to any of them points at this draft
+  const keep = (m) => (m?.id && ids.push(m.id), m);
+  const send = async (text) => keep(await discord.send(cfg.modChannel, text));
+  const preview = async (messages) => keep(await sendMessages(cfg.modChannel, messages, { quiet: true }));
+  const howTo = "React ✅ or reply “approve”, ❌ or “skip” to reject. Approving several? Say “approve all, with a gap” to space them out.";
   try {
     if (d.action?.type === "nudges") {
       const n = d.action.nudges.length;
-      await discord.send(cfg.modChannel, `📦 **${d.name}**: ${n} creator${n === 1 ? "" : "s"} to nudge about their sample:\n${quietText(d.summary)}`);
-      await discord.send(cfg.modChannel, `The DM${d.messages.length > 1 ? "s" : ""} (names, products and dates are filled in per creator):`);
-      await sendMessages(cfg.modChannel, d.messages, { quiet: true });
-      msg = await discord.send(cfg.modChannel, `👆 **${d.name}**\nReact ✅ to send the DMs, ❌ to reject. You can edit the wording first in the dashboard under Approvals.`);
+      await send(`📦 **${d.name}**: ${n} creator${n === 1 ? "" : "s"} to nudge about their sample:\n${quietText(d.summary)}`);
+      await send(`The DM${d.messages.length > 1 ? "s" : ""} (names, products and dates are filled in per creator):`);
+      await preview(d.messages);
+      msg = await send(`👆 **${d.name}**\n${howTo} You can edit the wording first in the dashboard under Approvals.`);
     } else if (d.action?.type === "tiers") {
-      await discord.send(cfg.modChannel, `🎖️ **${d.name}**: ${d.action.changes.length} role change${d.action.changes.length === 1 ? "" : "s"} to approve:\n${quietText(d.summary)}`);
+      await send(`🎖️ **${d.name}**: ${d.action.changes.length} role change${d.action.changes.length === 1 ? "" : "s"} to approve:\n${quietText(d.summary)}`);
       if (d.messages?.length) {
-        await discord.send(cfg.modChannel, `Announcement for ${where}:`);
-        await sendMessages(cfg.modChannel, d.messages, { quiet: true });
+        await send(`Announcement for ${where}:`);
+        await preview(d.messages);
       }
-      msg = await discord.send(cfg.modChannel, `👆 **${d.name}**\nReact ✅ to apply the roles${d.messages?.length ? " and post the announcement" : ""}, ❌ to reject. You can edit the announcement first in the dashboard under Approvals.`);
+      msg = await send(`👆 **${d.name}**\n${howTo} You can edit the announcement first in the dashboard under Approvals.`);
     } else {
-      await discord.send(cfg.modChannel, `📝 **${d.name}** is ready for review. Here’s exactly what will go to ${where}:`);
-      await sendMessages(cfg.modChannel, d.messages?.length ? d.messages : [{ text: d.text }], { quiet: true });
-      msg = await discord.send(cfg.modChannel, `👆 **${d.name}** → ${where}\nReact ✅ to approve and post it, ❌ to reject. You can edit it first in the dashboard under Approvals.`);
+      await send(`📝 **${d.name}** is ready for review. Here’s exactly what will go to ${where}:`);
+      await preview(d.messages?.length ? d.messages : [{ text: d.text }]);
+      msg = await send(`👆 **${d.name}** → ${where}\n${howTo} You can edit it first in the dashboard under Approvals.`);
     }
   } catch (e) {
     console.error("[review]", e.message);
   }
   if (!msg) return;
   await discord.react(cfg.modChannel, msg.id, ["✅", "❌"]);
-  store.update(ns, "drafts/" + id, { modMessageId: msg.id });
+  store.update(ns, "drafts/" + id, { modMessageId: msg.id, modMessageIds: ids });
+}
+
+/* ---------- approving in the moderators' channel, now or spaced out ---------- */
+
+const GAP_MAX = 12 * 60; // minutes
+
+/** Pending drafts the mods were shown in Discord, oldest first. */
+export const reviewable = (ns, gid) => store.list(ns, "drafts", (x) => x.guild === gid && x.status === "pending" && !x.test && x.modMessageId)
+  .sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""));
+
+/**
+ * Approve drafts from Discord. With `gap` (minutes) the first posts now and each next one that
+ * many minutes later. While earlier approvals are still waiting their turn, new ones join the end of
+ * that line (same gap), so "approve these too" keeps the spacing. Returns the plan: [{ draft, at }].
+ */
+export async function approveDrafts(ns, gid, drafts, { by, gap = 0 }) {
+  const t0 = Date.now();
+  const waiting = reviewable(ns, gid).filter((x) => x.postAt && Date.parse(x.postAt) > t0).sort((a, b) => a.postAt.localeCompare(b.postAt));
+  const last = waiting[waiting.length - 1];
+  const step = Math.min(GAP_MAX, Math.max(0, Math.round(gap || (last ? last.gap || 0 : 0)))) * 60_000;
+  let next = last ? Date.parse(last.postAt) + step : t0;
+  const plan = [];
+  for (const d of drafts) {
+    if (step && next > t0 + 1000) {
+      store.update(ns, "drafts/" + d.id, { postAt: new Date(next).toISOString(), gap: step / 60_000, approvedBy: by, history: [...(d.history || []), { at: now(), what: `Approved by ${by}, posting at ${new Date(next).toISOString()}` }] });
+      plan.push({ draft: d, at: next });
+    } else plan.push({ draft: d, at: 0 });
+    next += step;
+  }
+  // The ones due now go out one after another, in order.
+  for (const p of plan) if (!p.at) p.result = await startJob(ns, "post", { draftId: p.draft.id, by }, audit.discordActor(by.replace(/ \(in Discord\)$/, ""))).done;
+  return plan;
+}
+
+/** Post approved drafts whose turn has come. Called by the scheduler. */
+export async function postDue(ns, gid) {
+  const t = Date.now();
+  for (const d of reviewable(ns, gid).filter((x) => x.postAt && Date.parse(x.postAt) <= t)) {
+    store.update(ns, "drafts/" + d.id, { postAt: null });
+    const by = d.approvedBy || "a moderator (in Discord)";
+    const r = await startJob(ns, "post", { draftId: d.id, by }, audit.discordActor(by.replace(/ \(in Discord\)$/, ""))).done;
+    const err = r.status === "failed" ? r.error : r.result?.posted === false ? r.result.error : null;
+    if (err) await tellMods(ns, gid, `⚠️ **${d.name}** was approved but couldn’t be posted: ${err}`, { replyTo: d.modMessageId });
+  }
 }
 
 const HANDLERS = {
@@ -597,6 +646,7 @@ async function tick() {
       const built = await startJob(ns, "draft", { ...payload, source: "schedule" }, audit.SCHEDULE).done;
       if (built.status === "done" && built.result.draftId && !approve) await startJob(ns, "post", { draftId: built.result.draftId, by: "Schedule" }, audit.SCHEDULE).done;
     };
+    await postDue(ns, gid).catch((e) => console.error("[schedule] spaced posts", e));
     const items = autosOf(ns, gid);
     for (const [key, kind] of Object.entries(SCHEDULED)) {
       const s = items[key];

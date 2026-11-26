@@ -92,6 +92,12 @@ function Draft({ d }) {
                 <textarea className="input" value={m.text} disabled={!canEdit} onChange={(e) => setMsgs(msgs.map((x, j) => (j === i ? { ...x, text: e.target.value } : x)))} onBlur={save} />
               </label>
             ))}
+            {(d.postAt || d.changes) && (
+              <div className="meta">
+                {d.postAt && <span className="pill good">Approved by {d.approvedBy || "a moderator"} · posts {fmtTime(d.postAt)}</span>}
+                {d.changes && <span className="pill line" title={d.changes}>Changes asked: {d.changes.length > 90 ? d.changes.slice(0, 90) + "…" : d.changes}</span>}
+              </div>
+            )}
             <div className="acts">
               {nudgeAct
                 ? <button className="btn primary" type="button" disabled={!canEdit || !!busy} onClick={() => run("post", "Follow-ups sent")}><Ico name="check" />{busy === "post" ? "Sending…" : "Approve & send DMs"}</button>

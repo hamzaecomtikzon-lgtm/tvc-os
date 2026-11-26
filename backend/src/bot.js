@@ -1,13 +1,13 @@
 /*
  * What the bot does with live Discord events: counts community activity,
  * welcomes new members by DM and records their answers, keeps the DM inbox,
- * lets moderators approve drafts with a reaction, and answers the general chat.
+ * lets moderators approve drafts with a reaction or a typed reply (now or spaced out), and answers the general chat.
  */
 import { store } from "./store.js";
 import { discord, memberRow } from "./discord.js";
 import { ai } from "./ai.js";
 import { ymd } from "./dates.js";
-import { autosOf, cfgOf, obOf, startJob, tellMods } from "./jobs.js";
+import { approveDrafts, autosOf, cfgOf, obOf, reviewable, startJob, tellMods } from "./jobs.js";
 import * as audit from "./audit.js";
 
 const now = () => new Date().toISOString();
@@ -95,6 +95,7 @@ function onGuildMessage(d) {
   const log = recent.get(d.channel_id) || [];
   if (d.content) log.push({ who: d.member?.nick || d.author.global_name || d.author.username, text: d.content.slice(0, 400) });
   recent.set(d.channel_id, log.slice(-8));
+  if (d.channel_id === cfgOf(ns, d.guild_id).modChannel) return modReply(ns, g, d).catch((e) => console.error("[approvals]", e.message));
   return chatManager(ns, g, d).catch((e) => console.error("[chat manager]", e.message));
 }
 
@@ -127,7 +128,116 @@ function onVoice(d) {
   if (d.channel_id) voice.set(key, Date.now());
 }
 
-/* ---------- approvals from the moderator channel ---------- */
+/* ---------- approvals from the moderator channel: typed replies ---------- */
+const APPROVE = /\b(a+p+r+o+v+e*d?|a+p+r+o+v+i+n+g|go ahead|ship it|lgtm|looks good|good to go|green ?light|post (it|them|all|both|those|these)|send (it|them|all|both|those|these))\b|✅|👍/i;
+const YES = /^(yes|yep|yeah|yup|ok|okay|sure)\b/i;
+const REJECT = /\b(skip(ped)?|reject(ed)?|scrap|cancel|don'?t (post|send)|do not (post|send))\b|❌/i;
+const NO = /^(no|nope|nah)[.!]*$/i;
+const NOT = /\b(not|don'?t|do not|never|wait|hold( off)?)\b/i;
+const GAP = /\b(gaps?|space[ds]? (them |it )?out|spaced|spacing|apart|stagger(ed)?|spread (them |it )?out|one (at a time|by one)|between (each|them))\b/i;
+const ALL = /\b(all|both|everything|every ?one|them|those|these|the rest|batch)\b/i;
+const STOP = new Set("the and for with this that week weekly draft drafts from into your our approve approved post send skip reject".split(" "));
+
+/** Minutes in "30 min", "1 hour", "an hour", "half an hour", "90m"; 0 when none is given. */
+function minutesIn(text) {
+  if (/half an? hour/i.test(text)) return 30;
+  if (/\ban? hour\b/i.test(text)) return 60;
+  const m = text.match(/(\d+(?:\.\d+)?)\s*(m|mins?|minutes?|h|hrs?|hours?)\b/i);
+  return m ? Math.round(parseFloat(m[1]) * (/^h/i.test(m[2]) ? 60 : 1)) : 0;
+}
+
+/** What a moderator's message asks for: approve and/or skip (each with the words that name its drafts), and a gap. */
+export function readModReply(raw) {
+  const text = String(raw || "").trim();
+  const words = text.split(/\s+/).filter(Boolean).length;
+  const intentOf = (t) => {
+    const s = t.trim();
+    if (REJECT.test(s) || NO.test(s)) return "reject";
+    if (APPROVE.test(s) && !NOT.test(s.replace(/\bnot yet\b/i, ""))) return "approve";
+    if (APPROVE.test(s) && /\bnot yet\b/i.test(s)) return null;
+    if (YES.test(s) && words <= 6) return "approve";
+    return null;
+  };
+  // "approve the leaderboard, skip the viral one": each part on its own. Otherwise the whole message.
+  const parts = REJECT.test(text) && APPROVE.test(text) ? text.split(/[,;.\n]|\bbut\b|\band\b/i) : [text];
+  const asks = parts.map((t) => ({ intent: intentOf(t), text: t.trim() })).filter((a) => a.intent);
+  const gap = GAP.test(text) ? minutesIn(text) || 30 : 0;
+  return { asks, gap, words };
+}
+
+/** The drafts a part of a message points at: the one replied to, ones named, "all", or the only one. */
+function draftsFor(ns, gid, ask, { refDraft, gap, multi }) {
+  const open = reviewable(ns, gid);
+  const pool = ask.intent === "approve" ? open.filter((x) => !x.postAt) : open;
+  if (refDraft && !multi) return { list: pool.some((x) => x.id === refDraft.id) ? [refDraft] : [], why: "replied" };
+  const t = ask.text.toLowerCase();
+  const scored = pool.map((d) => {
+    const toks = String(d.name || "").toLowerCase().replace(/\([^)]*\)/g, " ").split(/[^a-z0-9#]+/).filter((w) => (w.length >= 4 || /^#\d+$/.test(w)) && !STOP.has(w));
+    return { d, n: toks.filter((w) => new RegExp(`(^|[^a-z0-9])${w.replace("#", "#?")}s?([^a-z0-9]|$)`).test(t)).length };
+  }).filter((x) => x.n);
+  if (scored.length) {
+    const top = Math.max(...scored.map((x) => x.n));
+    let best = scored.filter((x) => x.n === top).map((x) => x.d);
+    // Same name twice (one already approved and waiting): "skip the leaderboard" means the new one.
+    if (best.length > 1 && best.some((x) => !x.postAt)) best = best.filter((x) => !x.postAt);
+    if (best.length === 1 || ALL.test(t) || gap) return { list: best, why: "named" };
+    return { list: [], ambiguous: best };
+  }
+  if (ALL.test(t) || (gap && ask.intent === "approve")) return { list: pool, why: "all" };
+  if (pool.length <= 1) return { list: pool, why: "only" };
+  return { list: [], ambiguous: pool };
+}
+
+const stamp = (ms) => `<t:${Math.floor(ms / 1000)}:t> (<t:${Math.floor(ms / 1000)}:R>)`;
+
+/** A typed message in the approvals channel: "approved", "skip", "all approved but send in a gap", or change notes on a draft. */
+async function modReply(ns, g, d) {
+  const cfg = cfgOf(ns, g.guildId);
+  if (!cfg.modChannel || cfg.modChannel !== d.channel_id || !d.content) return;
+  const open = reviewable(ns, g.guildId);
+  if (!open.length) return;
+  const refId = d.message_reference?.message_id || d.referenced_message?.id;
+  const refDraft = refId ? open.find((x) => x.modMessageId === refId || (x.modMessageIds || []).includes(refId)) : null;
+  const { asks, gap, words } = readModReply(d.content);
+  const by = (d.member?.nick || d.author.global_name || d.author.username || "a moderator") + " (in Discord)";
+  const say = (text) => discord.send(d.channel_id, text, { replyTo: d.id }).catch(() => null);
+
+  if (!asks.length) {
+    // Notes written as a reply to a draft are change requests: kept on the draft for whoever edits it.
+    if (refDraft && words >= 3) {
+      store.update(ns, "drafts/" + refDraft.id, { changes: d.content.slice(0, 1000), history: [...(refDraft.history || []), { at: now(), what: `Changes asked by ${by}: ${d.content.slice(0, 200)}` }] });
+      await say(`📝 Noted for **${refDraft.name}**. Edit it in the dashboard under Approvals (your note is shown there), then reply “approve” here.`);
+    }
+    return;
+  }
+  const multi = asks.length > 1;
+  const done = new Set();
+  const lines = [];
+  for (const ask of asks) {
+    const { list, ambiguous } = draftsFor(ns, g.guildId, ask, { refDraft, gap, multi });
+    const todo = list.filter((x) => !done.has(x.id));
+    if (!todo.length) {
+      if (ambiguous?.length) await say(`Which one? ${ambiguous.map((x) => `**${x.name}**`).join(", ")} are waiting. Reply to that draft’s message, name it, or say “${ask.intent === "approve" ? "approve" : "skip"} all”.`);
+      continue;
+    }
+    todo.forEach((x) => done.add(x.id));
+    if (ask.intent === "reject") {
+      for (const x of todo) await startJob(ns, "reject", { draftId: x.id, by }, audit.discordActor(by.replace(/ \(in Discord\)$/, ""))).done;
+      if (todo.length > 1 || refDraft?.id !== todo[0].id) lines.push(`Skipped ${todo.map((x) => `**${x.name}**`).join(", ")}.`);
+      continue;
+    }
+    if (!refDraft || todo.length > 1 || gap) await discord.react(d.channel_id, d.id, ["👍"]).catch(() => {});
+    const plan = await approveDrafts(ns, g.guildId, todo, { by, gap });
+    const later = plan.filter((p) => p.at);
+    if (later.length) {
+      const now_ = plan.filter((p) => !p.at).map((p) => `• **${p.draft.name}**: ${p.result?.status === "done" && p.result.result?.posted !== false ? "posted now" : "couldn’t post now, see the dashboard"}`);
+      lines.push(`Got it, ${plan.length === 1 ? "it goes out" : `posting ${plan.length} approved drafts`} with a ${later[0].draft.gap || store.get(ns, "drafts/" + later[0].draft.id)?.gap || gap} min gap:\n${[...now_, ...later.map((p) => `• **${p.draft.name}**: ${stamp(p.at)}`)].join("\n")}`);
+    }
+  }
+  if (lines.length) await say(lines.join("\n"));
+}
+
+/* ---------- approvals from the moderator channel: reactions ---------- */
 async function approveByReaction(ns, d) {
   const emoji = d.emoji?.name;
   if (emoji !== "✅" && emoji !== "❌") return;
