@@ -10,6 +10,7 @@ import { addDays, dateList, daysBetween, todayUTC, ymd } from "./dates.js";
 import { createHash } from "node:crypto";
 import { store } from "./store.js";
 import { crmKeys } from "./crmKeys.js";
+import { levelOf, normalizeLevel } from "./levels.js";
 
 const shopOrThrow = (id) => {
   if (!SHOPS.some((s) => s.id === id)) throw Object.assign(new Error("Unknown shop"), { status: 404, code: "tool_error" });
@@ -107,7 +108,9 @@ const sample = {
       const followers = 800 + (hash("followers" + handle) % 250_000);
       return {
         ...EMPTY_CREATOR,
-        level: hash("level" + handle) % 6, followers, platformGmv: Math.round(t.gmv * (2 + (n % 9))), avatar: null,
+        // A stable 30-day platform GMV per creator (~$1 to ~$2M, most small), and the level it gives.
+        ...((g) => ({ platformGmv: g, level: levelOf(g) }))(Math.round(Math.exp(((hash("gmv30" + handle) % 1000) / 1000) * 14.5))),
+        followers, avatar: null,
         units: Math.round(t.sales * (1 + (n % 4) / 10)), lives: n % 7 === 0 ? 1 + (n % 3) : 0,
         likes: Math.round(t.views * (0.02 + (n % 5) / 100)), comments: Math.round(t.views * 0.0015),
         commission: Math.round(t.gmv * 0.12 * 100) / 100,
@@ -395,6 +398,8 @@ function makeLive(apiKey) {
           views: num(a.views), likes: num(a.likes), comments: num(a.comments), commission: r2(a.commission),
         });
       }
+      // Only the L0–L7 ladder (levels.js): TikTok’s level when it fits, else worked out from 30-day GMV.
+      for (const r of by.values()) r.level = normalizeLevel(r.level, r.platformGmv);
       return [...by.values()].sort((a, b) => b.gmv - a.gmv);
     },
 

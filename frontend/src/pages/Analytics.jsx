@@ -5,6 +5,7 @@ import { useCommunity, useCreators } from "../hooks/useCommunity.js";
 import { cohorts } from "../lib/community.js";
 import { COMM_TABS, defaultScoring } from "../lib/constants.js";
 import { downloadCsv, fmtDate, fmtSecs, initials, int, pct } from "../lib/format.js";
+import { LEVELS as LEVEL_LADDER, LevelPill, levelInfo } from "../lib/levels.jsx";
 import { Chg, DateRange, Empty, Ico, KBox, LineChart, PageHead, Skel, Tabs } from "../components/ui.jsx";
 
 const micro = { fontSize: "var(--text-micro)" };
@@ -20,7 +21,7 @@ export default function Analytics() {
     const name = `kreo-${tab}-${range.from}-to-${range.to}.csv`;
     if (tab === "community") {
       downloadCsv(name, [["TikTok", "Name", "Email", "Phone", "WhatsApp", "Discord", "Level", "Followers", "GMV", "Orders", "Units sold", "Commission", "Videos", "LIVEs", "Views", "Likes", "Comments", "Messages", "Joined"],
-        ...creators.rows.map((c) => [c.handle, c.name, c.email, c.phone, c.wa, c.member?.user || "", c.level == null ? "" : "L" + c.level, c.followers ?? "", c.gmv, c.sales, c.units, c.commission, c.videos, c.lives, c.views, c.likes, c.comments, c.msgs, c.joined])]);
+        ...creators.rows.map((c) => [c.handle, c.name, c.email, c.phone, c.wa, c.member?.user || "", c.level == null ? "" : `L${c.level} ${levelInfo(c.level)?.badge || ""}`.trim(), c.followers ?? "", c.gmv, c.sales, c.units, c.commission, c.videos, c.lives, c.views, c.likes, c.comments, c.msgs, c.joined])]);
     } else if (overall.data) {
       const d = overall.data;
       downloadCsv(name, [["Date", ...OVERALL.map((k) => d[k].label)], ...d.total_gmv.series.map((p, i) => [p.date, ...OVERALL.map((k) => d[k].series[i]?.v ?? "")])]);
@@ -275,15 +276,16 @@ const SORTS = {
   level: (c) => -(c.level ?? -1), followers: (c) => -(c.followers ?? -1), units: (c) => -c.units, videos: (c) => -c.videos,
   views: (c) => -c.views, likes: (c) => -c.likes, commission: (c) => -c.commission,
 };
-const LEVELS = [0, 1, 2, 3, 4, 5, 6, 7];
 // "At least" filters: [key, label, placeholder].
 const MINS = [["gmv", "GMV at least ($)", "e.g. 500"], ["followers", "Followers at least", "e.g. 10000"], ["maxFollowers", "Followers at most", "e.g. 100000"], ["units", "Units sold at least", "e.g. 20"], ["videos", "Videos at least", "e.g. 3"], ["views", "Views at least", "e.g. 50000"], ["likes", "Likes at least", "e.g. 1000"]];
 const NO_FILTERS = { levels: [], gmv: "", followers: "", maxFollowers: "", units: "", videos: "", views: "", likes: "", email: false };
 
-/** "level 2", "lvl 2", "L2" or "L1, L3" typed in the search box become level filters; the rest is searched as text. */
+/** "level 2", "lvl 2", "L2", "L1, L3" or a badge ("gold") typed in the search box become level filters; the rest is searched as text. */
 function parseQuery(q) {
   const levels = new Set();
-  const text = q.replace(/\b(?:level|lvl|l)\s*-?\s*(\d)\b/gi, (_, d) => { levels.add(Number(d)); return " "; }).replace(/[,+&]|\band\b/gi, " ").trim();
+  const badges = new RegExp(`\\b(${LEVEL_LADDER.map((x) => x.badge).join("|")})\\b`, "gi");
+  const text = q.replace(/\b(?:level|lvl|l)\s*-?\s*([0-7])\b/gi, (_, d) => { levels.add(Number(d)); return " "; })
+    .replace(badges, (w) => { levels.add(LEVEL_LADDER.find((x) => x.badge.toLowerCase() === w.toLowerCase()).level); return " "; }).replace(/[,+&]|\band\b/gi, " ").trim();
   return { text: text.toLowerCase(), levels: [...levels] };
 }
 const atLeast = (v, min) => min === "" || (v ?? 0) >= Number(min);
@@ -323,11 +325,9 @@ function Creators({ rows, loading, error }) {
       <div className="filters cr-levels" role="group" aria-label="Creator level">
         <span className="cr-lab">Level</span>
         <button type="button" className={"chip" + (!levels.length ? " on" : "")} onClick={() => { setF({ ...f, levels: [] }); if (typedLevels.length) setView({ q: text }); }}>Any</button>
-        {LEVELS.map((l) => {
-          const n = rows.filter((c) => c.level === l).length;
-          if (!n && !levels.includes(l)) return null;
-          return <button key={l} type="button" aria-pressed={levels.includes(l)} className={"chip" + (levels.includes(l) ? " on" : "")} onClick={() => toggleLevel(l)}>L{l} <small>{n}</small></button>;
-        })}
+        {LEVEL_LADDER.map(({ level: l, badge, range }) => (
+          <button key={l} type="button" title={`${badge}: 30-day GMV ${range}`} aria-pressed={levels.includes(l)} className={"chip" + (levels.includes(l) ? " on" : "")} onClick={() => toggleLevel(l)}>L{l} {badge} <small>{rows.filter((c) => c.level === l).length}</small></button>
+        ))}
         {rows.some((c) => c.level == null) && <button type="button" aria-pressed={levels.includes("unknown")} className={"chip" + (levels.includes("unknown") ? " on" : "")} onClick={() => toggleLevel("unknown")}>Unknown <small>{rows.filter((c) => c.level == null).length}</small></button>}
         <button type="button" className={"chip" + (more || extra ? " on" : "")} aria-expanded={more} onClick={() => setMore(!more)}><Ico name="search" />More filters{extra ? <small>{extra}</small> : null}</button>
         {active > 0 && <button type="button" className="btn ghost sm" onClick={clear}>Clear filters</button>}
@@ -361,7 +361,7 @@ function Creators({ rows, loading, error }) {
                 {!c.email && !c.phone && !c.wa && <span className="muted">Not in {crmName}</span>}
               </div></td>
               <td>{c.member ? <><span className="pill good">@{c.member.user}</span><div className="muted" style={{ ...micro, marginTop: 3 }}>{c.engaged ? "Engaged" : "Quiet"}</div></> : <span className="pill line">Not in Discord</span>}</td>
-              <td>{c.level != null ? <span className="pill">L{c.level}</span> : <span className="muted">—</span>}</td>
+              <td><LevelPill level={c.level} /></td>
               <td className="r num">{c.followers != null ? compact(c.followers) : "—"}</td>
               <td className="r num">{c.gmv ? money(c.gmv, true) : "—"}</td>
               <td className="r num">{int(c.units)}</td>

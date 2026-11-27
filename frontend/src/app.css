@@ -870,3 +870,6 @@ select.input { appearance: none; background-image: linear-gradient(45deg, transp
 .cr-tbl { min-width: 1280px; }
 .cr-tbl .cav { position: relative; overflow: hidden; }
 .cr-tbl .cav img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+
+/* TikTok creator level pill: "L2 · Gold", tinted by badge */
+.lvl { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: var(--radius-full); font-size: var(--text-micro); font-weight: 600; white-space: nowrap; color: var(--lvl); background: color-mix(in srgb, var(--lvl) 13%, transparent); border: 1px solid color-mix(in srgb, var(--lvl) 30%, transparent); }

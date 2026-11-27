@@ -94,6 +94,20 @@ async function sendMessages(channelId, messages, { quiet } = {}) {
 const draftText = (d) => (d.messages?.length ? d.messages.map((m) => m.text).join("\n\n") : d.text || "");
 
 /** Show a new draft to the moderators, who can approve it there with a reaction. */
+const OPENERS = ["Ready when you are 👋", "Fresh one for you to check 👀", "Here’s the next one, have a look 🙌", "This one’s waiting on you ✨", "Give this a quick look before it goes out 🙏"];
+/** The friendly approve / skip / change prompt at the end of each review in the moderators' channel. */
+export function reviewPrompt(id, name, what, edit = "it") {
+  const opener = OPENERS[[...String(id)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 0) % OPENERS.length];
+  return [
+    `👆 **${name}**: ${opener}`,
+    `Happy with ${what}?`,
+    "✅ **Good to go?** React ✅ or just reply “approved”",
+    "❌ **Not this one?** React ❌ or reply “skip”",
+    `✏️ **Want changes?** Reply to this message and say what to change (or edit ${edit} in the dashboard under Approvals)`,
+    "⏱️ **Approving a few?** Say “approve all, 30 min apart” and I’ll space them out",
+  ].join("\n");
+}
+
 async function announceDraft(ns, g, id) {
   const d = store.get(ns, "drafts/" + id);
   const cfg = cfgOf(ns, g.guildId);
@@ -105,25 +119,26 @@ async function announceDraft(ns, g, id) {
   const keep = (m) => (m?.id && ids.push(m.id), m);
   const send = async (text) => keep(await discord.send(cfg.modChannel, text));
   const preview = async (messages) => keep(await sendMessages(cfg.modChannel, messages, { quiet: true }));
-  const howTo = "React ✅ or reply “approve”, ❌ or “skip” to reject. Approving several? Say “approve all, with a gap” to space them out.";
+  // Every review ends with the same friendly "what now" block, so anyone in the channel knows how to answer.
+  const howTo = (what, edit) => reviewPrompt(id, d.name, what, edit);
   try {
     if (d.action?.type === "nudges") {
       const n = d.action.nudges.length;
       await send(`📦 **${d.name}**: ${n} creator${n === 1 ? "" : "s"} to nudge about their sample:\n${quietText(d.summary)}`);
       await send(`The DM${d.messages.length > 1 ? "s" : ""} (names, products and dates are filled in per creator):`);
       await preview(d.messages);
-      msg = await send(`👆 **${d.name}**\n${howTo} You can edit the wording first in the dashboard under Approvals.`);
+      msg = await send(howTo("these sample nudges", "the wording"));
     } else if (d.action?.type === "tiers") {
       await send(`🎖️ **${d.name}**: ${d.action.changes.length} role change${d.action.changes.length === 1 ? "" : "s"} to approve:\n${quietText(d.summary)}`);
       if (d.messages?.length) {
         await send(`Announcement for ${where}:`);
         await preview(d.messages);
       }
-      msg = await send(`👆 **${d.name}**\n${howTo} You can edit the announcement first in the dashboard under Approvals.`);
+      msg = await send(howTo("these role changes", "the announcement"));
     } else {
       await send(`📝 **${d.name}** is ready for review. Here’s exactly what will go to ${where}:`);
       await preview(d.messages?.length ? d.messages : [{ text: d.text }]);
-      msg = await send(`👆 **${d.name}** → ${where}\n${howTo} You can edit it first in the dashboard under Approvals.`);
+      msg = await send(howTo(`this for ${where}`, "it"));
     }
   } catch (e) {
     console.error("[review]", e.message);

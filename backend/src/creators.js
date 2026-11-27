@@ -7,7 +7,7 @@
  *   2. The link opens the join page in the app (#join/<token>). No account: the link is the identity.
  *      They enter their TikTok handle, niche and country and agree that brands can find them.
  *   3. They're saved here, and their numbers (30-day GMV, sales, videos) are read from the CRM of the
- *      brand whose server they came from. The level is worked out from that GMV.
+ *      brand whose server they came from, with their TikTok level (levels.js: L0 Bronze … L7 Diamond).
  * Creators can come back to the same link to update their details or leave (which hides them).
  * Anyone who messages KREO "join" gets a fresh link.
  *
@@ -26,6 +26,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { sql, store } from "./store.js";
 import { deriveKey } from "./crmKeys.js";
+import { LEVELS, levelOf, normalizeLevel } from "./levels.js";
 import { crmFor } from "./crm.js";
 import { addDays, todayUTC, ymd } from "./dates.js";
 import { DiscordError } from "./discord.js";
@@ -34,12 +35,7 @@ import { KREO_COLOR, avatarOf, isPlatformAdmin, kreo, kreoDmHooks, kreoGuildName
 export const NICHES = ["Health & wellness", "Beauty & skincare", "Fashion", "Fitness", "Food & drink", "Home & kitchen", "Tech & gadgets", "Pets", "Baby & kids", "Lifestyle", "Other"];
 export const COUNTRIES = [["US", "United States"], ["GB", "United Kingdom"], ["CA", "Canada"], ["AU", "Australia"], ["DE", "Germany"], ["FR", "France"], ["IT", "Italy"], ["ES", "Spain"], ["MX", "Mexico"], ["BR", "Brazil"], ["PH", "Philippines"], ["MY", "Malaysia"], ["ID", "Indonesia"], ["TH", "Thailand"], ["VN", "Vietnam"], ["SG", "Singapore"], ["PK", "Pakistan"], ["IN", "India"], ["AE", "United Arab Emirates"], ["SA", "Saudi Arabia"], ["OTHER", "Somewhere else"]];
 
-/**
- * Level from GMV over the last 30 days. KREO's own scale, one place to change it.
- * L1 under $1k · L2 $1k+ · L3 $10k+ · L4 $50k+ · L5 $200k+
- */
-export const LEVELS = [[200_000, 5], [50_000, 4], [10_000, 3], [1_000, 2], [0, 1]];
-export const levelOf = (gmv) => (gmv == null ? null : LEVELS.find(([min]) => gmv >= min)[1]);
+export { LEVELS, levelOf } from "./levels.js";
 
 sql.exec(`
   CREATE TABLE IF NOT EXISTS kreo_creators (
@@ -89,6 +85,17 @@ function save(c) {
   return read(q.get.get(c.id));
 }
 export const getCreator = (id) => read(q.get.get(id));
+
+/** Their level: TikTok's (via the CRM) when known, else from their 30-day GMV. */
+function levelFrom(m) {
+  return !m?.found ? null : m.level ?? levelOf(m.platformGmv ?? m.gmv);
+}
+
+// Levels saved before the L0–L7 ladder: work them out again (only rows whose level changes are written).
+for (const c of q.all.all().map(read)) {
+  const lv = levelFrom(c.metrics);
+  if (lv !== c.level) save({ ...c, level: lv });
+}
 
 /** A server name: from KREO’s live list, else asked from Discord once (cached). */
 const names = new Map();
@@ -166,6 +173,10 @@ export async function metricsFor(c) {
       out.videos += hit.videos || 0;
       out.views += hit.views || 0;
       out.sources.push(store.owner(ns)?.brand || shop.name);
+      if (hit.platformGmv != null) out.platformGmv = Math.max(out.platformGmv ?? 0, hit.platformGmv);
+      if (hit.followers != null) out.followers = Math.max(out.followers ?? 0, hit.followers);
+      const lv = normalizeLevel(hit.level, hit.platformGmv);
+      if (lv != null) out.level = Math.max(out.level ?? 0, lv);
     }
   }
   return out;
@@ -173,7 +184,7 @@ export async function metricsFor(c) {
 async function refresh(c) {
   const metrics = await Promise.race([metricsFor(c), new Promise((r) => setTimeout(() => r(undefined), 15_000))]).catch(() => undefined);
   if (metrics === undefined) return c; // the CRM was slow or down: keep what we had
-  return save({ ...c, metrics, level: metrics?.found ? levelOf(metrics.gmv) : null });
+  return save({ ...c, metrics, level: levelFrom(metrics) });
 }
 
 /* ---------- the join page (public: the signed link is the identity) ---------- */
@@ -340,7 +351,7 @@ export function loadSamples(n = 50) {
     do tiktok = `sample.${first.toLowerCase()}${pick(["", ".", "_"])}${pick(WORDS[niche])}${Math.floor(rnd() * 90 + 10)}`; while (taken.has(tiktok));
     taken.add(tiktok);
     // A spread of levels: most creators small, a few large.
-    const gmv = Math.round(Math.exp(rnd() * 12.5) * 100) / 100; // ~$1 to ~$270k
+    const gmv = Math.round(Math.exp(rnd() * 14.6) * 100) / 100; // ~$1 to ~$2.2M: every level from L0 Bronze to L7 Diamond
     const sales = Math.max(1, Math.round(gmv / (15 + rnd() * 30)));
     const joined = new Date(Date.now() - Math.floor(rnd() * 60) * 864e5).toISOString();
     save({
@@ -368,7 +379,7 @@ function list({ q: text, niche, level, show = "all" }) {
     creators: rows.slice(0, 500),
     total: rows.length,
     counts: { joined: count((c) => !c.sample && c.status === "joined"), invited: count((c) => !c.sample && c.status === "invited"), left: count((c) => !c.sample && c.status === "left"), samples: count((c) => c.sample) },
-    niches: NICHES, levels: LEVELS.map(([min, l]) => ({ level: l, min })).reverse(), appUrl: appUrl(),
+    niches: NICHES, levels: LEVELS, appUrl: appUrl(),
   };
 }
 

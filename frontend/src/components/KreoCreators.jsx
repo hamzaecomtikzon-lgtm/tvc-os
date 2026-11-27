@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useApp } from "../context/app.js";
 import { api } from "../services/api.js";
 import { Empty, Ico, Skel } from "./ui.jsx";
+import { LEVELS, LevelPill } from "../lib/levels.jsx";
 
 const usd = (n) => (n == null ? "–" : "$" + (n >= 10_000 ? Math.round(n).toLocaleString("en-US") : n.toLocaleString("en-US", { maximumFractionDigits: 2 })));
 const short = (n) => (n == null ? "–" : n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(n));
@@ -126,7 +127,7 @@ export function CreatorDatabase({ reloadKey }) {
   const k = data.counts;
   return (
     <section className="card2">
-      <div className="h"><h3>Creator database</h3><p>Creators who joined through KREO. Their numbers come from the CRM of the brand whose server they joined from (last 30 days), and the level is worked out from that GMV: {data.levels.map((l) => `L${l.level} ${l.min ? usd(l.min) + "+" : "under " + usd(data.levels[1]?.min)}`).join(" · ")}.</p></div>
+      <div className="h"><h3>Creator database</h3><p>Creators who joined through KREO. Their numbers come from the CRM of the brand whose server they joined from (last 30 days), and their level is TikTok's own (L0 Bronze to L7 Diamond, by 30-day GMV; hover a level for its range).</p></div>
       <div className="kb-facts kcr-facts">
         <div><span>Joined</span><b>{k.joined}</b></div>
         <div><span>Invited, not joined yet</span><b>{k.invited}</b></div>
@@ -136,7 +137,7 @@ export function CreatorDatabase({ reloadKey }) {
       <div className="kcr-filters">
         <input className="input" placeholder="Search name, @tiktok, niche, server" value={f.q} onChange={(e) => setF({ ...f, q: e.target.value })} aria-label="Search creators" />
         <select className="input" value={f.niche} onChange={(e) => setF({ ...f, niche: e.target.value })} aria-label="Niche"><option value="">All niches</option>{data.niches.map((n) => <option key={n}>{n}</option>)}</select>
-        <select className="input" value={f.level} onChange={(e) => setF({ ...f, level: e.target.value })} aria-label="Level"><option value="">All levels</option>{data.levels.map((l) => <option key={l.level} value={l.level}>L{l.level}</option>)}</select>
+        <select className="input" value={f.level} onChange={(e) => setF({ ...f, level: e.target.value })} aria-label="Level"><option value="">All levels</option>{LEVELS.map((l) => <option key={l.level} value={l.level}>L{l.level} {l.badge} ({l.range})</option>)}</select>
         <select className="input" value={f.show} onChange={(e) => setF({ ...f, show: e.target.value })} aria-label="Show"><option value="all">Real + sample</option><option value="real">Real only</option><option value="sample">Sample only</option></select>
       </div>
       {!data.creators.length ? (
@@ -153,7 +154,7 @@ export function CreatorDatabase({ reloadKey }) {
                 <td>{c.tiktok ? <a href={`https://www.tiktok.com/@${c.tiktok}`} target="_blank" rel="noreferrer">@{c.tiktok}</a> : "–"}</td>
                 <td>{c.niche || "–"}</td>
                 <td>{c.country || "–"}</td>
-                <td>{c.level ? <span className="pill">L{c.level}</span> : <span className="muted" title={c.metrics && !c.metrics.found ? "Not found in the CRM" : ""}>–</span>}</td>
+                <td>{c.level != null ? <LevelPill level={c.level} /> : <span className="muted" title={c.metrics && !c.metrics.found ? "Not found in the CRM" : ""}>–</span>}</td>
                 <td className="r num">{c.metrics?.found ? usd(c.metrics.gmv) : "–"}</td>
                 <td className="r num">{c.metrics?.found ? short(c.metrics.sales) : "–"}</td>
                 <td>{c.sample ? <span className="pill line">Sample</span> : <span className={"pill " + (STATUS[c.status]?.[0] || "")}>{STATUS[c.status]?.[1] || c.status}</span>}{!c.sample && c.status === "joined" && c.metrics && !c.metrics.found && <small className="kcr-note">{c.metrics.checked ? "Not in the CRM yet" : "Server not linked to a brand"}</small>}</td>
