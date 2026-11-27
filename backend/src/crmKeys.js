@@ -32,6 +32,8 @@ function secret() {
   return createHash("sha256").update(readFileSync(file, "utf8").trim()).digest();
 }
 const KEY = secret();
+/** A separate key for another purpose (e.g. signing links), derived from the same secret. */
+export const deriveKey = (label) => createHash("sha256").update(KEY).update("|" + label).digest();
 
 function encrypt(text) {
   const iv = randomBytes(12);

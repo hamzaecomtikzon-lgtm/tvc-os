@@ -209,3 +209,20 @@
 @media (prefers-reduced-motion: reduce) {
   .site * { transition: none !important; scroll-behavior: auto !important; }
 }
+
+/* KREO join page (#join/<token>): reuses the sign-in layout */
+.site .j-card { border: 1px solid var(--color-border); border-radius: var(--radius-xl); padding: 14px; margin: 20px 0 4px; display: grid; gap: 12px; }
+.site .j-person { display: flex; gap: 12px; align-items: center; }
+.site .j-person b { display: block; color: var(--color-heading); font-weight: 600; overflow-wrap: anywhere; }
+.site .j-person span:not(.j-av) { display: block; font-size: var(--text-micro); color: var(--color-text-muted); }
+.site .j-av { width: 40px; height: 40px; border-radius: 50%; background: #5b4cf5; color: #fff; display: grid; place-items: center; overflow: hidden; flex: none; font-weight: 600; }
+.site .j-av img { width: 100%; height: 100%; object-fit: cover; }
+.site .j-card dl { display: grid; gap: 8px; margin: 0; border-top: 1px solid var(--color-border); padding-top: 12px; }
+.site .j-card dl div { display: flex; justify-content: space-between; gap: 12px; font-size: var(--text-small); }
+.site .j-card dt { color: var(--color-text-muted); }
+.site .j-card dd { margin: 0; color: var(--color-heading); font-weight: 500; text-align: right; overflow-wrap: anywhere; }
+.site .j-row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
+.site .j-consent { display: flex; gap: 10px; align-items: flex-start; font-size: var(--text-small); color: var(--color-text); line-height: 1.45; cursor: pointer; }
+.site .j-consent input { width: 18px; height: 18px; margin-top: 2px; flex: none; accent-color: var(--color-primary); }
+.site .j-consent.bad span { color: var(--color-danger); }
+.site .j-small { font-size: var(--text-small); opacity: 0.8; max-width: 40ch; margin-top: 24px; }

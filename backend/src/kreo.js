@@ -60,8 +60,20 @@ const admins = () => new Set(String(process.env.KREO_PLATFORM_ADMINS || "").spli
 /** Only the platform owner(s) listed in KREO_PLATFORM_ADMINS. Brand owners and admins never are. */
 export const isPlatformAdmin = (user) => Boolean(user?.email && admins().has(String(user.email).toLowerCase()));
 
+/* ---------- shared with creators.js ---------- */
+export const KREO_COLOR = COLOR;
+export const nameOf = (u) => u?.global_name || u?.username || "";
+export const avatarOf = (u) => (u?.avatar ? `https://cdn.discordapp.com/avatars/${u.id}/${u.avatar}.png?size=128` : null);
+/** A server's name from the live list (null when KREO hasn't seen it). */
+export const kreoGuildName = (id) => live.get(id)?.name || null;
+/** Save a message in KREO's conversation history. */
+export function recordKreo({ userId, name = "", channelId = null, guildId = null, direction = "out", text = "", title = null, buttonUrl = null, status = "sent", error = null, messageId = null, sentBy = null }) {
+  return Number(q.add.run(userId, name, channelId, guildId, direction, text, title, buttonUrl, status, error, messageId, sentBy, new Date().toISOString()).lastInsertRowid);
+}
+/** Called with every DM a person sends KREO (after it's saved). creators.js uses it to answer "join". */
+export const kreoDmHooks = [];
+
 /* ---------- live events (KREO's gateway only) ---------- */
-const nameOf = (u) => u?.global_name || u?.username || "";
 
 export async function onKreoEvent(type, d) {
   if (type === "READY") {
@@ -78,6 +90,7 @@ export async function onKreoEvent(type, d) {
     if (d.guild_id || d.author?.bot || q.seen.get(d.id)) return;
     const text = [d.content, ...(d.attachments || []).map((a) => a.url)].filter(Boolean).join("\n");
     q.add.run(d.author.id, nameOf(d.author), d.channel_id, null, "in", text.slice(0, 4000), null, null, "received", null, d.id, null, new Date(Number(BigInt(d.id) >> 22n) + 1420070400000).toISOString());
+    for (const hook of kreoDmHooks) await Promise.resolve(hook(d)).catch((e) => console.error("[kreo dm hook]", e.message));
   }
 }
 
@@ -138,7 +151,7 @@ const LIMIT = 20, WINDOW = 10 * 60_000;
 const fail = (status, message, code = "bad_request", field) => Object.assign(new Error(message), { status, code, ...(field ? { field } : {}) });
 
 /** Plain words for Discord's refusals. */
-function why(e) {
+export function why(e) {
   if (e.code === 50007) return "Discord didn’t deliver it: this person has turned off DMs from server members (or blocked KREO). They can turn it on in the server’s Privacy Settings → Direct Messages.";
   if (e.code === 10013) return "Discord doesn’t know that user id.";
   if (e.code === 40003 || e.status === 429) return "Discord is limiting how fast KREO can open new DMs. Wait a minute and try again.";

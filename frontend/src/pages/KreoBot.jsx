@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useApp } from "../context/app.js";
 import { api } from "../services/api.js";
 import { Empty, Ico, PageHead, Skel } from "../components/ui.jsx";
+import { CreatorDatabase, InviteCreators } from "../components/KreoCreators.jsx";
 
 const when = (iso) => new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 const ID_RE = /^\d{17,20}$/;
@@ -15,6 +16,7 @@ export default function KreoBot() {
   const [st, setSt] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState("");
+  const [sentAt, setSentAt] = useState(0);
 
   const load = useCallback(async () => {
     try {
@@ -95,6 +97,9 @@ export default function KreoBot() {
             ) : <Empty title="Not in any server yet">Use “Add KREO to a server” above and pick your testing server.</Empty>}
           </section>
         )}
+
+        {st.configured && st.bot && st.guilds.length > 0 && <InviteCreators guilds={st.guilds} onSent={() => setSentAt(Date.now())} />}
+        <CreatorDatabase reloadKey={sentAt} />
 
         {st.configured && st.bot && st.guilds.length > 0 && <TestDm guilds={st.guilds} botName={st.bot.name} botAvatar={st.bot.avatar} />}
       </div>

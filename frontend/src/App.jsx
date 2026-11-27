@@ -21,6 +21,7 @@ import AuditLogs from "./pages/AuditLogs.jsx";
 import KreoBot from "./pages/KreoBot.jsx";
 import Landing from "./pages/Landing.jsx";
 import Auth from "./pages/Auth.jsx";
+import Join from "./pages/Join.jsx";
 import SetupOverlay from "./pages/SetupOverlay.jsx";
 
 const PAGES = { dashboard: Dashboard, analytics: Analytics, approvals: Approvals, automations: Automations, "automation-builder": Builder, onboarding: Onboarding, content: Content, workspace: Settings, "audit-logs": AuditLogs, "kreo-bot": KreoBot };
@@ -43,6 +44,7 @@ const takeNext = () => {
  * Routes (URL hash):
  *   #home, #features, #how, …     public home page
  *   #signin, #signup              account screens (signed-out only)
+ *   #join/<token>                 a creator joining KREO from its invite DM (public)
  *   #dashboard, #analytics, …     the app (signed-in only)
  */
 export default function App() {
@@ -63,6 +65,8 @@ export default function App() {
     }
   }, [redirect, hash]);
 
+  // KREO’s invite button: public, signed in or not.
+  if (hash.startsWith("join/")) return <Join key={hash} token={hash.slice(5)} />;
   if (redirect) return null;
   if (user && isApp) return <AppProvider key={user.workspace}><Shell /></AppProvider>;
   if (isAuth) return <Auth key={hash} mode={hash} />;

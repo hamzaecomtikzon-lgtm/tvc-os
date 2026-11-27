@@ -844,3 +844,18 @@ select.input { appearance: none; background-image: linear-gradient(45deg, transp
 .kc-txt span { color: var(--color-muted, #6b6b6b); font-size: var(--text-small); }
 .kc-app { background: #5865f2; color: #fff !important; font-size: 10px !important; font-weight: 700; padding: 1px 5px; border-radius: 4px; }
 .kc-setup { align-items: center; }
+
+/* KREO creator database (KREO bot page) */
+.kcr-facts { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.kcr-filters { display: grid; grid-template-columns: minmax(0, 2fr) repeat(3, minmax(0, 1fr)); gap: 8px; }
+.kcr-tbl { min-width: 1080px; }
+.kcr-tbl tbody tr { cursor: default; }
+.kcr-who { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.kcr-who b { display: block; font-weight: 500; color: var(--color-heading); white-space: nowrap; }
+.kcr-who small, .kcr-note { display: block; font-size: var(--text-micro); color: var(--color-text-muted); white-space: nowrap; }
+.kcr-acts { display: inline-flex; gap: 2px; }
+.kcr-fails { margin: 0; padding-left: 18px; font-size: var(--text-small); color: var(--color-text-muted); display: grid; gap: 2px; }
+@media (max-width: 720px) {
+  .kcr-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .kcr-filters { grid-template-columns: minmax(0, 1fr); }
+}
