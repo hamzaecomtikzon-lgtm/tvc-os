@@ -27,7 +27,7 @@ const toQuery = (f) => new URLSearchParams(Object.entries({ ...f, levels: f.leve
  * shortlists and reach out (through their own bot, or through KREO with an invite to their server).
  */
 export default function CreatorSearch() {
-  const { toast, user } = useApp();
+  const { toast, user, view, setView } = useApp();
   useDb();
   const [query, setQuery] = useState("");
   const [f, setF] = useState(EMPTY);
@@ -67,6 +67,13 @@ export default function CreatorSearch() {
       setBusy(false);
     }
   };
+  // Arriving from quick find (⌘K → "Find creators: …"): run that search once.
+  useEffect(() => {
+    if (!view.csq) return;
+    const q = view.csq;
+    setView({ csq: undefined });
+    ask(q);
+  }, [view.csq]); // eslint-disable-line react-hooks/exhaustive-deps
   const reset = () => { setF({ ...EMPTY, samples: f.samples }); setSummary(null); setQuery(""); };
   const toggle = (key, v) => setF({ ...f, [key]: f[key].includes(v) ? f[key].filter((x) => x !== v) : [...f[key], v] });
 

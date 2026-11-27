@@ -44,6 +44,10 @@ export const PATHS = {
   x: <path d="M6 6l12 12M18 6 6 18" />,
   redo: <path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v5h-5" />,
   external: <path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" />,
+  sidebar: <><rect width="18" height="18" x="3" y="3" rx="2" /><path d="M9 3v18" /></>,
+  chevRight: <path d="m9 18 6-6-6-6" />,
+  book: <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" />,
+  keyboard: <><rect width="20" height="16" x="2" y="4" rx="2" /><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M6 12h.01M10 12h.01M14 12h.01M18 12h.01M7 16h10" /></>,
 };
 
 export function Icon({ name, size }) {

@@ -923,3 +923,81 @@ select.input { appearance: none; background-image: linear-gradient(45deg, transp
 }
 .kcr-auto { display: grid; gap: 2px; border: 1px solid var(--color-border); border-radius: var(--radius-xl); padding: 10px 12px; }
 .kcr-auto .cr-check { height: auto; }
+
+/* ---------- app frame: breadcrumbs, collapsible sidebar, quick find, help ---------- */
+.topbar { gap: 8px; padding: 10px 20px 10px 14px; }
+.side-toggle { flex: none; }
+.side-toggle .ico { width: 18px; height: 18px; }
+.crumbs { min-width: 0; flex: 1 1 auto; overflow: hidden; }
+.crumbs ol { list-style: none; margin: 0; padding: 0; display: flex; align-items: center; gap: 2px; min-width: 0; white-space: nowrap; }
+.crumbs li { display: flex; align-items: center; gap: 2px; min-width: 0; font-size: var(--text-small); color: var(--color-text-muted); }
+.crumbs li .sep { width: 14px; height: 14px; color: var(--color-text-subtle); flex: none; }
+.crumbs button, .crumbs span { border: 0; background: none; font: inherit; color: inherit; padding: 4px 6px; border-radius: var(--radius-md); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
+.crumbs button { cursor: pointer; }
+.crumbs button:hover { background: var(--color-surface-subtle); color: var(--color-heading); }
+.crumbs li.cur span { color: var(--color-heading); font-weight: 600; }
+.qf-btn { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 8px 0 10px; border: 1px solid var(--color-border); border-radius: var(--radius-xl); background: var(--color-surface); color: var(--color-text-muted); font-size: var(--text-small); cursor: pointer; }
+.qf-btn:hover { border-color: var(--color-border-strong); color: var(--color-heading); }
+.qf-btn .ico { width: 16px; height: 16px; }
+.qf-btn kbd, .qf kbd, .help-keys kbd { font-family: var(--font-mono); font-size: 10px; color: var(--color-text-subtle); border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); padding: 1px 5px; background: var(--color-surface-subtle); }
+
+/* Collapsed sidebar: icons only */
+.app { transition: grid-template-columns var(--duration-base) var(--ease), filter 400ms var(--ease); }
+.side .navgroup { display: grid; gap: 2px; }
+.side .navgroup + .navgroup { margin-top: 2px; }
+@media (min-width: 901px) {
+  .app.collapsed { grid-template-columns: 72px minmax(0, 1fr); }
+  .app.collapsed .side { padding: 16px 10px; align-items: center; overflow-x: hidden; }
+  .app.collapsed .logo b, .app.collapsed .side .ws-txt, .app.collapsed .side .navtxt, .app.collapsed .side .trial { display: none; }
+  .app.collapsed .side .ws { width: 48px; justify-content: center; padding: 6px; }
+  .app.collapsed .side nav { width: 100%; }
+  .app.collapsed .side .navlabel { font-size: 0; padding: 6px 0 4px; }
+  .app.collapsed .side .navlabel::after { content: ""; display: block; height: 1px; background: var(--color-border); margin: 4px 10px; }
+  .app.collapsed .side nav a { justify-content: center; padding: 0; position: relative; }
+  .app.collapsed .side nav a small { position: absolute; top: 4px; right: 6px; min-width: 0; padding: 0 5px; font-size: 9px; line-height: 15px; }
+  .app.collapsed .side nav a small:not(.hot) { display: none; }
+}
+
+/* Quick find (⌘K) */
+.qf-bg { position: fixed; inset: 0; z-index: 70; background: var(--color-overlay); display: flex; justify-content: center; align-items: flex-start; padding: 12vh 16px 16px; }
+.qf { width: min(620px, 100%); background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-card); box-shadow: var(--shadow-dialog); overflow: hidden; }
+.qf-in { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--color-border); }
+.qf-in .ico { width: 18px; height: 18px; color: var(--color-text-subtle); flex: none; }
+.qf-in input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; font: inherit; font-size: var(--text-body); color: var(--color-heading); }
+.qf ul { list-style: none; margin: 0; padding: 6px; max-height: 380px; overflow-y: auto; }
+.qf li { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: var(--radius-lg); cursor: pointer; font-size: var(--text-small); color: var(--color-text); }
+.qf li .ico { width: 16px; height: 16px; color: var(--color-text-muted); flex: none; }
+.qf li span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qf li small { font-size: var(--text-micro); color: var(--color-text-subtle); flex: none; }
+.qf li.on { background: var(--color-primary-tint); color: var(--color-primary); }
+.qf li.on .ico { color: var(--color-primary); }
+.qf .qf-empty { cursor: default; color: var(--color-text-muted); }
+.qf-foot { display: flex; gap: 16px; padding: 8px 14px; border-top: 1px solid var(--color-border); font-size: var(--text-micro); color: var(--color-text-muted); flex-wrap: wrap; }
+.qf-foot kbd { margin-right: 2px; }
+
+/* Help menu */
+.help-pop { width: 320px; }
+.help-tip { font-size: var(--text-small); color: var(--color-text); padding: 4px 10px 10px; margin: 0; line-height: 1.5; }
+.help-keys { display: grid; gap: 6px; padding: 10px; margin-bottom: 4px; border-top: 1px solid var(--color-border); border-bottom: 1px solid var(--color-border); font-size: var(--text-small); }
+.help-keys b { color: var(--color-heading); font-weight: 600; font-size: var(--text-micro); text-transform: uppercase; letter-spacing: 0.06em; }
+.help-keys div { display: flex; justify-content: space-between; gap: 10px; align-items: center; color: var(--color-text-muted); }
+.help-keys kbd { margin-left: 3px; }
+
+@media (max-width: 900px) {
+  .topbar { padding: 10px 12px; }
+  .crumbs li:not(.cur):not(:nth-last-child(2)) { display: none; }
+  .crumbs li:nth-last-child(2) .sep { display: none; }
+}
+@media (max-width: 600px) {
+  .qf-btn span, .qf-btn kbd { display: none; }
+  .qf-btn { width: 38px; padding: 0; justify-content: center; border-color: transparent; }
+  .crumbs li:not(.cur) { display: none; }
+  .crumbs li.cur .sep { display: none; }
+  .help-pop { width: min(320px, calc(100vw - 24px)); }
+}
+.side .navgroup + .navgroup .navlabel { padding-top: 14px; }
+.crumbs li .sep { stroke-width: 2.25; }
+.side { gap: 12px; }
+.side nav a { height: 36px; }
+.side .navlabel { padding: 8px 12px 3px; }
+.side .navgroup + .navgroup .navlabel { padding-top: 10px; }
