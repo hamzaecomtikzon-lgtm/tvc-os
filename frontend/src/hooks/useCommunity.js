@@ -42,6 +42,8 @@ export function useCreators() {
         key: c ? "c:" + c.handle : "m:" + m.id, handle: c?.handle || m?.tiktok || "", name: c?.name || m?.name || "",
         email: c?.email || "", phone: c?.phone || "", wa: dmWa || c?.whatsapp || "", waSrc: dmWa ? "dm" : c?.whatsapp ? "crm" : "",
         gmv: c?.gmv || 0, sales: c?.sales || 0, videos: c?.videos || 0, views: c?.views || 0, inCrm: !!c,
+        units: c?.units ?? c?.sales ?? 0, likes: c?.likes || 0, comments: c?.comments || 0, commission: c?.commission || 0, lives: c?.lives || 0,
+        level: c?.level ?? null, followers: c?.followers ?? null, platformGmv: c?.platformGmv ?? null, avatar: c?.avatar || null,
         member: m || null, msgs: s?.m || 0, activeDays: s?.ad || 0, engaged: (s?.ad || 0) >= 3, joined: m?.joined || "",
       };
     };

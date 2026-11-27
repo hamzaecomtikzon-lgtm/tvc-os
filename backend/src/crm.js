@@ -15,6 +15,13 @@ const shopOrThrow = (id) => {
   if (!SHOPS.some((s) => s.id === id)) throw Object.assign(new Error("Unknown shop"), { status: 404, code: "tool_error" });
 };
 const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || "");
+/** Every field a creator row from listCreators carries (live or sample). level is TikTok's L0–L7 (L1–L9 in UK/EU), null when unknown. */
+export const EMPTY_CREATOR = {
+  handle: "", name: "", email: "", phone: null, whatsapp: null, avatar: null,
+  level: null, followers: null, platformGmv: null,
+  gmv: 0, sales: 0, units: 0, commission: 0, videos: 0, lives: 0, views: 0, likes: 0, comments: 0,
+};
+
 const rangeOrThrow = (from, to) => {
   if (!isDate(from) || !isDate(to) || from > to || daysBetween(from, to) > 400) throw Object.assign(new Error("Bad date range"), { status: 400, code: "tool_error" });
 };
@@ -95,7 +102,15 @@ const sample = {
       const n = hash("contact" + handle);
       const first = handle.split(/[._]/)[0];
       const digits = String(1000 + (n % 9000));
+      const t = by[handle];
+      // Profile numbers are stable per creator; engagement scales with the range's views.
+      const followers = 800 + (hash("followers" + handle) % 250_000);
       return {
+        ...EMPTY_CREATOR,
+        level: hash("level" + handle) % 6, followers, platformGmv: Math.round(t.gmv * (2 + (n % 9))), avatar: null,
+        units: Math.round(t.sales * (1 + (n % 4) / 10)), lives: n % 7 === 0 ? 1 + (n % 3) : 0,
+        likes: Math.round(t.views * (0.02 + (n % 5) / 100)), comments: Math.round(t.views * 0.0015),
+        commission: Math.round(t.gmv * 0.12 * 100) / 100,
         handle,
         name: first[0].toUpperCase() + first.slice(1) + " " + "ABCDEFGHJKLMNPRSTW"[n % 18] + ".",
         email: handle.replace(/[^a-z0-9]/g, "") + "@example.com",
@@ -354,19 +369,31 @@ function makeLive(apiKey) {
       ]);
       const by = new Map();
       const row = (handle, nickname) => {
-        if (!by.has(handle)) by.set(handle, { handle, name: nickname || handle, email: "", phone: null, whatsapp: null, gmv: 0, sales: 0, videos: 0, views: 0 });
+        if (!by.has(handle)) by.set(handle, { ...EMPTY_CREATOR, handle, name: nickname || handle });
         return by.get(handle);
+      };
+      // Profile fields (level, followers, 30-day platform GMV) come from either list; the range's numbers from the time series.
+      const profile = (r, x) => {
+        if (x.level != null && x.level !== "") r.level = num(x.level);
+        if (x.follower_cnt != null) r.followers = num(x.follower_cnt);
+        if (x.med_gmv_revenue != null) r.platformGmv = num(x.med_gmv_revenue);
+        if (x.avatar_url) r.avatar = x.avatar_url;
       };
       for (const c of contacts) {
         if (!c.handle) continue;
         const r = row(c.handle, c.nickname);
         r.email = c.email || "";
         r.phone = c.phone_number || null;
+        profile(r, c);
       }
       for (const a of sales) {
         if (!a.handle) continue;
         const r = row(a.handle, a.nickname);
-        Object.assign(r, { gmv: r2(a.gmv), sales: num(a.units_sold), videos: num(a.video_count), views: num(a.views) });
+        profile(r, a);
+        Object.assign(r, {
+          gmv: r2(a.gmv), sales: num(a.units_sold), units: num(a.items_sold ?? a.units_sold), videos: num(a.video_count), lives: num(a.live_count),
+          views: num(a.views), likes: num(a.likes), comments: num(a.comments), commission: r2(a.commission),
+        });
       }
       return [...by.values()].sort((a, b) => b.gmv - a.gmv);
     },

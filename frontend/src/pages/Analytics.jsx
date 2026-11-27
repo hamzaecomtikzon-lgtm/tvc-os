@@ -19,8 +19,8 @@ export default function Analytics() {
   const exportCsv = () => {
     const name = `kreo-${tab}-${range.from}-to-${range.to}.csv`;
     if (tab === "community") {
-      downloadCsv(name, [["TikTok", "Name", "Email", "Phone", "WhatsApp", "Discord", "GMV", "Sales", "Videos", "Messages", "Joined"],
-        ...creators.rows.map((c) => [c.handle, c.name, c.email, c.phone, c.wa, c.member?.user || "", c.gmv, c.sales, c.videos, c.msgs, c.joined])]);
+      downloadCsv(name, [["TikTok", "Name", "Email", "Phone", "WhatsApp", "Discord", "Level", "Followers", "GMV", "Orders", "Units sold", "Commission", "Videos", "LIVEs", "Views", "Likes", "Comments", "Messages", "Joined"],
+        ...creators.rows.map((c) => [c.handle, c.name, c.email, c.phone, c.wa, c.member?.user || "", c.level == null ? "" : "L" + c.level, c.followers ?? "", c.gmv, c.sales, c.units, c.commission, c.videos, c.lives, c.views, c.likes, c.comments, c.msgs, c.joined])]);
     } else if (overall.data) {
       const d = overall.data;
       downloadCsv(name, [["Date", ...OVERALL.map((k) => d[k].label)], ...d.total_gmv.series.map((p, i) => [p.date, ...OVERALL.map((k) => d[k].series[i]?.v ?? "")])]);
@@ -269,31 +269,91 @@ const SEGS = {
   wa: ["Has WhatsApp", (c) => !!c.wa],
   unlinked: ["Not linked", (c) => !c.member || !c.inCrm],
 };
-const SORTS = { gmv: (c) => -c.gmv, msgs: (c) => -c.msgs, joined: (c) => c.joined || "9", name: (c) => c.handle || c.name };
+// Numeric sorts are largest first; the rest A→Z / oldest first.
+const SORTS = {
+  gmv: (c) => -c.gmv, msgs: (c) => -c.msgs, joined: (c) => c.joined || "9", name: (c) => c.handle || c.name,
+  level: (c) => -(c.level ?? -1), followers: (c) => -(c.followers ?? -1), units: (c) => -c.units, videos: (c) => -c.videos,
+  views: (c) => -c.views, likes: (c) => -c.likes, commission: (c) => -c.commission,
+};
+const LEVELS = [0, 1, 2, 3, 4, 5, 6, 7];
+// "At least" filters: [key, label, placeholder].
+const MINS = [["gmv", "GMV at least ($)", "e.g. 500"], ["followers", "Followers at least", "e.g. 10000"], ["maxFollowers", "Followers at most", "e.g. 100000"], ["units", "Units sold at least", "e.g. 20"], ["videos", "Videos at least", "e.g. 3"], ["views", "Views at least", "e.g. 50000"], ["likes", "Likes at least", "e.g. 1000"]];
+const NO_FILTERS = { levels: [], gmv: "", followers: "", maxFollowers: "", units: "", videos: "", views: "", likes: "", email: false };
+
+/** "level 2", "lvl 2", "L2" or "L1, L3" typed in the search box become level filters; the rest is searched as text. */
+function parseQuery(q) {
+  const levels = new Set();
+  const text = q.replace(/\b(?:level|lvl|l)\s*-?\s*(\d)\b/gi, (_, d) => { levels.add(Number(d)); return " "; }).replace(/[,+&]|\band\b/gi, " ").trim();
+  return { text: text.toLowerCase(), levels: [...levels] };
+}
+const atLeast = (v, min) => min === "" || (v ?? 0) >= Number(min);
 
 function Creators({ rows, loading, error }) {
   const { view, setView, money, crmName, openCreator } = useApp();
   const [seg, setSeg] = useState("all");
   const [sort, setSort] = useState("gmv");
-  const q = (view.q || "").toLowerCase();
+  const [f, setF] = useState(NO_FILTERS);
+  const [more, setMore] = useState(false);
   if (loading) return <div className="tile"><Skel n={6} /></div>;
   if (error) return <div className="tile"><Empty title="Couldn’t load creators">{error.message}</Empty></div>;
-  const list = rows.filter(SEGS[seg][1]).filter((c) => !q || [c.handle, c.name, c.email, c.member?.user].join(" ").toLowerCase().includes(q))
-    .sort((a, b) => { const x = SORTS[sort](a), y = SORTS[sort](b); return x < y ? -1 : x > y ? 1 : 0; });
+
+  const { text, levels: typedLevels } = parseQuery(view.q || "");
+  const levels = [...new Set([...f.levels, ...typedLevels])];
+  const pass = (c) =>
+    (!levels.length || levels.includes(c.level ?? "unknown") || (levels.includes("unknown") && c.level == null)) &&
+    atLeast(c.gmv, f.gmv) && atLeast(c.followers, f.followers) && (f.maxFollowers === "" || (c.followers ?? 0) <= Number(f.maxFollowers)) &&
+    atLeast(c.units, f.units) && atLeast(c.videos, f.videos) && atLeast(c.views, f.views) && atLeast(c.likes, f.likes) &&
+    (!f.email || !!c.email) &&
+    (!text || [c.handle, c.name, c.email, c.member?.user].join(" ").toLowerCase().includes(text));
+  const filtered = rows.filter(pass);
+  const list = filtered.filter(SEGS[seg][1]).sort((a, b) => { const x = SORTS[sort](a), y = SORTS[sort](b); return x < y ? -1 : x > y ? 1 : 0; });
+  const extra = MINS.filter(([k]) => f[k] !== "").length + (f.email ? 1 : 0);
+  const active = levels.length + extra;
+  const toggleLevel = (l) => setF({ ...f, levels: f.levels.includes(l) ? f.levels.filter((x) => x !== l) : [...f.levels, l] });
+  const clear = () => { setF(NO_FILTERS); if (typedLevels.length) setView({ q: text }); };
+  const hasLevels = rows.some((c) => c.level != null);
+
   const Th = ({ k, children, r }) => <th className={r ? "r" : ""}><button type="button" onClick={() => setSort(k)}>{children}{sort === k ? " ↓" : ""}</button></th>;
   return (
     <>
       <div className="filters">
-        <input className="input" placeholder="Search name, @handle or email" aria-label="Search creators" value={view.q || ""} onChange={(e) => setView({ q: e.target.value })} />
-        {Object.entries(SEGS).map(([k, [label, fn]]) => <button key={k} type="button" className={"chip" + (seg === k ? " on" : "")} onClick={() => setSeg(k)}>{label} <small>{rows.filter(fn).length}</small></button>)}
-        <span className="muted" style={{ marginLeft: "auto", ...micro }}>Email and phone from {crmName} (sample contacts). WhatsApp from {crmName} or found in DMs.</span>
+        <input className="input" placeholder="Search name, @handle, email or “L2”" aria-label="Search creators" value={view.q || ""} onChange={(e) => setView({ q: e.target.value })} />
+        {Object.entries(SEGS).map(([k, [label, fn]]) => <button key={k} type="button" className={"chip" + (seg === k ? " on" : "")} onClick={() => setSeg(k)}>{label} <small>{filtered.filter(fn).length}</small></button>)}
       </div>
-      <div className="tblwrap"><table className="tbl">
-        <thead><tr><Th k="name">Creator</Th><th>Contact</th><th>Discord</th><Th k="gmv" r>GMV</Th><th className="r">Sales</th><th className="r">Videos</th><Th k="msgs" r>Messages</Th><Th k="joined">Joined</Th></tr></thead>
+      <div className="filters cr-levels" role="group" aria-label="Creator level">
+        <span className="cr-lab">Level</span>
+        <button type="button" className={"chip" + (!levels.length ? " on" : "")} onClick={() => { setF({ ...f, levels: [] }); if (typedLevels.length) setView({ q: text }); }}>Any</button>
+        {LEVELS.map((l) => {
+          const n = rows.filter((c) => c.level === l).length;
+          if (!n && !levels.includes(l)) return null;
+          return <button key={l} type="button" aria-pressed={levels.includes(l)} className={"chip" + (levels.includes(l) ? " on" : "")} onClick={() => toggleLevel(l)}>L{l} <small>{n}</small></button>;
+        })}
+        {rows.some((c) => c.level == null) && <button type="button" aria-pressed={levels.includes("unknown")} className={"chip" + (levels.includes("unknown") ? " on" : "")} onClick={() => toggleLevel("unknown")}>Unknown <small>{rows.filter((c) => c.level == null).length}</small></button>}
+        <button type="button" className={"chip" + (more || extra ? " on" : "")} aria-expanded={more} onClick={() => setMore(!more)}><Ico name="search" />More filters{extra ? <small>{extra}</small> : null}</button>
+        {active > 0 && <button type="button" className="btn ghost sm" onClick={clear}>Clear filters</button>}
+        <span className="muted" style={{ marginLeft: "auto", ...micro }}>{int(list.length)} of {int(rows.length)} creators</span>
+      </div>
+      {more && (
+        <div className="cr-more">
+          {MINS.map(([k, label, ph]) => (
+            <label key={k} className="field">{label}
+              <input className="input" type="number" min="0" inputMode="numeric" placeholder={ph} value={f[k]} onChange={(e) => setF({ ...f, [k]: e.target.value })} />
+            </label>
+          ))}
+          <label className="cr-check"><input type="checkbox" checked={f.email} onChange={(e) => setF({ ...f, email: e.target.checked })} />Has an email</label>
+        </div>
+      )}
+      {!hasLevels && <p className="muted" style={{ ...micro, margin: "0 0 10px" }}>{crmName} hasn’t sent creator levels for this shop yet, so every creator shows “Unknown”.</p>}
+      <div className="tblwrap"><table className="tbl cr-tbl">
+        <thead><tr>
+          <Th k="name">Creator</Th><th>Contact</th><th>Discord</th><Th k="level">Level</Th><Th k="followers" r>Followers</Th>
+          <Th k="gmv" r>GMV</Th><Th k="units" r>Units sold</Th><Th k="videos" r>Videos</Th><Th k="views" r>Views</Th><Th k="likes" r>Likes</Th>
+          <Th k="commission" r>Commission</Th><Th k="msgs" r>Messages</Th><Th k="joined">Joined</Th>
+        </tr></thead>
         <tbody>
           {list.map((c) => (
             <tr key={c.key} onClick={() => openCreator(c.key)}>
-              <td><div className="who"><span className="cav">{initials(c.name || c.handle)}</span><div><b>{c.handle ? "@" + c.handle : c.name}</b><span>{c.handle ? c.name : "No TikTok handle yet"}</span></div></div></td>
+              <td><div className="who"><span className="cav">{c.avatar ? <img src={c.avatar} alt="" onError={(e) => { e.currentTarget.remove(); }} /> : null}{initials(c.name || c.handle)}</span><div><b>{c.handle ? "@" + c.handle : c.name}</b><span>{c.handle ? c.name : "No TikTok handle yet"}</span></div></div></td>
               <td><div className="contact">
                 {c.email && <div><Ico name="mail" />{c.email} <span className="src">CRM</span></div>}
                 {c.phone && <div><Ico name="phone" />{c.phone} <span className="src">CRM</span></div>}
@@ -301,16 +361,27 @@ function Creators({ rows, loading, error }) {
                 {!c.email && !c.phone && !c.wa && <span className="muted">Not in {crmName}</span>}
               </div></td>
               <td>{c.member ? <><span className="pill good">@{c.member.user}</span><div className="muted" style={{ ...micro, marginTop: 3 }}>{c.engaged ? "Engaged" : "Quiet"}</div></> : <span className="pill line">Not in Discord</span>}</td>
-              <td className="r num">{c.gmv ? money(c.gmv, true) : "—"}</td><td className="r num">{int(c.sales)}</td><td className="r num">{int(c.videos)}</td><td className="r num">{c.member ? int(c.msgs) : "—"}</td>
+              <td>{c.level != null ? <span className="pill">L{c.level}</span> : <span className="muted">—</span>}</td>
+              <td className="r num">{c.followers != null ? compact(c.followers) : "—"}</td>
+              <td className="r num">{c.gmv ? money(c.gmv, true) : "—"}</td>
+              <td className="r num">{int(c.units)}</td>
+              <td className="r num">{int(c.videos)}</td>
+              <td className="r num">{c.views ? compact(c.views) : "—"}</td>
+              <td className="r num">{c.likes ? compact(c.likes) : "—"}</td>
+              <td className="r num">{c.commission ? money(c.commission, true) : "—"}</td>
+              <td className="r num">{c.member ? int(c.msgs) : "—"}</td>
               <td className="muted">{c.joined ? fmtDate(c.joined) : "—"}</td>
             </tr>
           ))}
-          {!list.length && <tr><td colSpan={8}><Empty title="No creators match">Try another filter or search.</Empty></td></tr>}
+          {!list.length && <tr><td colSpan={13}><Empty title="No creators match">Try another level, filter or search.{active > 0 && <> <button type="button" className="btn ghost sm" onClick={clear}>Clear filters</button></>}</Empty></td></tr>}
         </tbody>
       </table></div>
+      <p className="muted" style={{ ...micro, marginTop: 8 }}>Level and followers come from TikTok via {crmName}. GMV, units, videos, views, likes and commission are for the selected dates. Email and phone from {crmName}; WhatsApp from {crmName} or found in DMs.</p>
     </>
   );
 }
+
+const compact = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1).replace(/\.0$/, "") + "M" : n >= 1e4 ? Math.round(n / 1e3) + "k" : n >= 1e3 ? (n / 1e3).toFixed(1).replace(/\.0$/, "") + "k" : String(Math.round(n)));
 
 /* ---------- overall (CRM) ---------- */
 const OVERALL = ["total_gmv", "orders", "affiliate_gmv", "ads_gmv", "videos_posted", "samples_delivered"];
