@@ -8,6 +8,7 @@ import { ago, initials } from "../lib/format.js";
 import { BotAvatar, ChanSelect, Dialog, Ico, PageHead, Sw } from "../components/ui.jsx";
 import CommunityBuilder from "../components/CommunityBuilder.jsx";
 import LogoCropper from "../components/LogoCropper.jsx";
+import { KreoCard } from "../components/KreoConnect.jsx";
 const TABS = [["workspace", "Workspace", "home"], ["bot", "Bot & server", "server"], ["channels", "Channels", "hash"], ["crm", "CRM & data", "plug"], ["team", "Team", "users"], ["notifications", "Notifications", "bell"], ["billing", "Plan & billing", "card"]];
 const PANELS = { workspace: Workspace, bot: Bot, channels: Channels, crm: Crm, team: Team, notifications: Notifications, billing: Billing };
 
@@ -240,6 +241,7 @@ function Bot() {
           {guild && <button className="btn" type="button" disabled={!isAdmin} onClick={() => setBuilding(true)}><Ico name="blocks" />Open AI Community Builder</button>}
         </div>
       </section>
+      <KreoCard isAdmin={isAdmin} Ico={Ico} />
       {building && <div className="site"><CommunityBuilder guild={guild} brand={user.brand} onCreate={onCreate} onClose={() => setBuilding(false)} /></div>}
     </>
   );

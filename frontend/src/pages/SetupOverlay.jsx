@@ -8,6 +8,7 @@ import { fmtTime } from "../lib/format.js";
 import { CRMS, CRM_CHECKS, SLOTS, STEPS, autoMatch, baseName, readAvatar } from "../lib/setup.js";
 import { Icon } from "../components/site.jsx";
 import CommunityBuilder from "../components/CommunityBuilder.jsx";
+import { KreoSetupRow } from "../components/KreoConnect.jsx";
 
 const initials = (s) => s.replace(/[^a-z0-9 ]/gi, " ").trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
 
@@ -218,6 +219,7 @@ function StepBot({ ctx }) {
         </button>
       </div>
       {problem && <p className="k-micro" role="alert" style={{ marginTop: 8 }}>{problem}</p>}
+      <KreoSetupRow Icon={Icon} />
       <p className="k-micro" style={{ marginTop: 8 }}>
         Wrong server? <button type="button" className="k-linkbtn" onClick={() => saveWs({ guildId: "", invite: "waiting", map: {}, channelsDone: false })}>Choose a different one</button>
       </p>

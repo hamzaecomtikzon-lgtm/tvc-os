@@ -9,7 +9,8 @@
  *   POST /api/requests                           ask the bot to do something (see jobs.js)
  *   POST /api/crm/<tool>                         CRM data (see crm.js)
  *   GET  /api/media/<id>.png                     a generated card image (public, unguessable id)
- *   /api/kreo/*                                  the official KREO bot (platform admins only, see kreo.js)
+ *   GET  /api/kreo-connection                    is the official KREO bot in this workspace's server? + its add link
+ *   /api/kreo/*                                the official KREO bot (platform admins only, see kreo.js)
  */
 import "./env.js";
 import { createServer } from "node:http";
@@ -24,7 +25,7 @@ import { onEvent } from "./bot.js";
 import { ai } from "./ai.js";
 import { DEFAULT_THEME, brandInfo } from "./brandTheme.js";
 import * as audit from "./audit.js";
-import { isPlatformAdmin, kreoRoute, onKreoEvent, startKreo } from "./kreo.js";
+import { isPlatformAdmin, kreoConnection, kreoRoute, onKreoEvent, startKreo } from "./kreo.js";
 
 /** Record a sign-in or sign-up in the workspace's audit log, then hand the user back. `action` is auth.signin, auth.signup or auth.join. */
 function signedIn(user, action, label, how) {
@@ -150,6 +151,11 @@ async function route(req, res) {
   const needAdmin = () => { if (!admin) throw fail(403, "Your role can’t change this. Ask the workspace owner.", "forbidden"); };
   const me = audit.actorOf(user);
   const record = (e) => audit.log(ns, me, e);
+
+  // Whether the official KREO bot is in this workspace's server, and the one-click link that adds it.
+  if (p === "/api/kreo-connection" && m === "GET") {
+    return send(res, 200, await kreoConnection(store.get(ns, "workspace/main")?.guildId, { fresh: url.searchParams.get("fresh") === "1" }));
+  }
 
   // The official KREO bot: separate from the brand bot, controlled by the platform admins only.
   if (p.startsWith("/api/kreo/")) return send(res, 200, await kreoRoute({ p, m, user, readJson: () => readJson(req) }));

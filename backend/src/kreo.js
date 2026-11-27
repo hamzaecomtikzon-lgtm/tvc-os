@@ -69,8 +69,10 @@ export async function onKreoEvent(type, d) {
     for (const g of d.guilds || []) live.set(g.id, { id: g.id, name: g.name || "", members: null });
   } else if (type === "GUILD_CREATE" || type === "GUILD_UPDATE") {
     live.set(d.id, { id: d.id, name: d.name, members: d.member_count ?? live.get(d.id)?.members ?? null });
+    inGuildCache.delete(d.id);
   } else if (type === "GUILD_DELETE") {
     if (!d.unavailable) live.delete(d.id);
+    inGuildCache.delete(d.id);
   } else if (type === "MESSAGE_CREATE") {
     // A creator writing to KREO in its DMs. Server messages and KREO's own messages are ignored.
     if (d.guild_id || d.author?.bot || q.seen.get(d.id)) return;
@@ -194,6 +196,40 @@ async function sendTest(user, body) {
     q.add.run(userId, name, channelId, guildId, "out", text, title || null, buttonUrl || null, "failed", error, null, user.email, at);
     return { ok: false, to: { id: userId, name }, code: e.code ?? null, result: error };
   }
+}
+
+/* ---------- for each company: add KREO to their own server ---------- */
+const inGuildCache = new Map(); // guildId → { at, value }
+
+/** True when KREO is in the server, false when it isn't, null when Discord couldn't be asked. */
+async function kreoIn(guildId, fresh) {
+  if (live.has(guildId)) return true;
+  const hit = inGuildCache.get(guildId);
+  if (!fresh && hit && Date.now() - hit.at < 15_000) return hit.value;
+  let value;
+  try {
+    await kreo.call("GET", `/guilds/${guildId}`);
+    value = true;
+  } catch (e) {
+    value = e instanceof DiscordError && [403, 404].includes(e.status) ? false : null;
+  }
+  inGuildCache.set(guildId, { at: Date.now(), value });
+  return value;
+}
+
+/**
+ * What a company sees about KREO for its server: whether it's there, and a one-click link that adds it
+ * (their server already picked). Never exposes the token. `guildId` is the workspace's own server.
+ */
+export async function kreoConnection(guildId, { fresh } = {}) {
+  if (!kreo.configured()) return { available: false };
+  const info = await kreo.info();
+  if (!info.configured) return { available: false };
+  const out = { available: true, bot: { name: info.bot?.name || "KREO", avatar: info.bot?.avatar || null }, guildId: guildId || null, inGuild: null, inviteUrl: null };
+  if (!/^\d{17,20}$/.test(guildId || "")) return out;
+  out.inviteUrl = info.inviteUrl ? `${info.inviteUrl}&guild_id=${guildId}&disable_guild_select=true` : null;
+  out.inGuild = await kreoIn(guildId, fresh);
+  return out;
 }
 
 /* ---------- routes (platform admins only) ---------- */
