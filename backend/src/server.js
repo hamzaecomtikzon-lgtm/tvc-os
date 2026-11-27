@@ -13,6 +13,7 @@
  *   /api/kreo/*                                the official KREO bot (platform admins only, see kreo.js)
  *   GET|POST /api/join/<token>                 the creator join page behind KREO's invite button (public, see creators.js)
  *   /api/kreo/creators, /api/kreo/invite       the KREO creator database (platform admins only, see creators.js)
+ *   /api/creator-search                        KREO AI creator search + outreach, for brands (see search.js)
  */
 import "./env.js";
 import { createServer } from "node:http";
@@ -28,7 +29,8 @@ import { ai } from "./ai.js";
 import { DEFAULT_THEME, brandInfo } from "./brandTheme.js";
 import * as audit from "./audit.js";
 import { isPlatformAdmin, kreoConnection, kreoRoute, onKreoEvent, startKreo } from "./kreo.js";
-import { creatorsRoute, joinRoute } from "./creators.js";
+import { creatorsRoute, joinRoute, startCreatorRefresh } from "./creators.js";
+import { searchRoute } from "./search.js";
 
 /** Record a sign-in or sign-up in the workspace's audit log, then hand the user back. `action` is auth.signin, auth.signup or auth.join. */
 function signedIn(user, action, label, how) {
@@ -39,7 +41,9 @@ function signedIn(user, action, label, how) {
 const PORT = Number(process.env.PORT) || 8787;
 const MAX_BODY = 1024 * 1024;
 // Collections the browser may write. Everything else (discord, requests, activity…) is written by the server.
-const WRITABLE = ["workspace", "config", "automations", "allowlist", "scoring", "onboarding", "drafts", "custom"];
+const WRITABLE = ["workspace", "config", "automations", "allowlist", "scoring", "onboarding", "drafts", "custom", "shortlists"];
+// What moderators may write too (viewers never write). Everything else needs an owner or admin.
+const TEAM_WRITABLE = ["drafts/", "shortlists/"];
 // What each role may do besides reading. Viewers only read.
 const MOD_JOBS = ["post", "reject", "test", "dm", "dm_read", "draft", "dm_link", "dm_status", "welcome"];
 const PATH_RE = /^([a-z_]+)\/([A-Za-z0-9_.-]{1,80})$/;
@@ -164,7 +168,9 @@ async function route(req, res) {
   }
 
   // The official KREO bot: separate from the brand bot, controlled by the platform admins only.
-  if (p === "/api/kreo/invite" || p.startsWith("/api/kreo/creators")) return send(res, 200, await creatorsRoute({ p, m, user, url, readJson: () => readJson(req) }));
+  // KREO AI creator search: every signed-in brand user (messaging needs owner, admin or moderator).
+  if (p === "/api/creator-search" || p.startsWith("/api/creator-search/")) return send(res, 200, await searchRoute({ p, m, user, url, readJson: () => readJson(req) }));
+  if (p === "/api/kreo/invite" || p === "/api/kreo/settings" || p.startsWith("/api/kreo/creators")) return send(res, 200, await creatorsRoute({ p, m, user, url, readJson: () => readJson(req) }));
   if (p.startsWith("/api/kreo/")) return send(res, 200, await kreoRoute({ p, m, user, readJson: () => readJson(req) }));
 
   // Audit log: who did what, and when. Owners and admins only.
@@ -307,7 +313,7 @@ async function route(req, res) {
   }
   if (p.startsWith("/api/docs/") && m === "PUT") {
     const path = docPath(url);
-    if (!path.startsWith("drafts/") || user.role === "Viewer") needAdmin();
+    if (!TEAM_WRITABLE.some((x) => path.startsWith(x)) || user.role === "Viewer") needAdmin();
     const { doc } = await readJson(req);
     if (!doc || typeof doc !== "object" || Array.isArray(doc)) throw fail(400, "A document must be an object.");
     if (path === "workspace/main" && doc.guildId) {
@@ -319,8 +325,8 @@ async function route(req, res) {
     return send(res, 200, {});
   }
   if (p.startsWith("/api/docs/") && m === "DELETE") {
-    needAdmin();
     const path = docPath(url);
+    if (!path.startsWith("shortlists/") || user.role === "Viewer") needAdmin();
     const before = store.get(ns, path);
     store.remove(ns, path, cid);
     if (before) for (const e of audit.describeDoc(ns, path, before, null)) record(e);
@@ -377,5 +383,7 @@ gateway.start(onEvent).then((started) => {
 });
 // The official KREO bot connects on its own; it never waits for, or stops, the brand bot.
 startKreo();
+// Joined KREO creators: re-read their numbers from the CRM once a day.
+startCreatorRefresh();
 // Bring each workspace's channels and member list up to date.
 if (discord.configured()) for (const { ns, ws } of store.workspaces()) if (ws.guildId) startJob(ns, "sync");

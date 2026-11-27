@@ -13,7 +13,7 @@ const short = (n) => (n == null ? "–" : n >= 1e6 ? (n / 1e6).toFixed(1) + "M" 
 const day = (iso) => (iso ? new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "–");
 const STATUS = { joined: ["good", "Joined"], invited: ["line", "Invited"], left: ["rose", "Left"] };
 
-export function InviteCreators({ guilds, onSent }) {
+export function InviteCreators({ guilds, onSent, membersIntent }) {
   const { toast } = useApp();
   const [guildId, setGuildId] = useState(guilds[0]?.id || "");
   const [list, setList] = useState(undefined); // undefined loading · null no intent · [] members
@@ -59,6 +59,7 @@ export function InviteCreators({ guilds, onSent }) {
   return (
     <section className="card2">
       <div className="h"><h3>Invite creators to KREO</h3><p>KREO DMs each person a <b>Join KREO</b> button. It opens a short page in this app where they link their TikTok, pick a niche and agree that brands can find them. They don’t need an account. People can also message KREO “join” to get the button.</p></div>
+      <AutoInvite membersIntent={membersIntent} />
       <div className="frow">
         <label className="field">Server
           <select className="input" value={guildId} onChange={(e) => setGuildId(e.target.value)}>{guilds.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select>
@@ -95,6 +96,26 @@ export function InviteCreators({ guilds, onSent }) {
         <ul className="kcr-fails">{out.results.filter((r) => !r.ok).map((r) => <li key={r.userId}><b>{r.name || r.userId}</b>: {r.result}</li>)}</ul>
       )}
     </section>
+  );
+}
+
+/** On/off for KREO inviting people who join a server it's in (new members only). */
+export function AutoInvite({ membersIntent }) {
+  const { toast } = useApp();
+  const [s, setS] = useState(null);
+  useEffect(() => { api("GET", "/kreo/settings").then(setS).catch((e) => toast(e.message)); }, [toast]);
+  const set = async (autoInvite) => {
+    try { setS(await api("PUT", "/kreo/settings", { autoInvite })); } catch (e) { toast(e.message); }
+  };
+  if (!s) return null;
+  return (
+    <div className="kcr-auto">
+      <label className="cr-check"><input type="checkbox" checked={s.autoInvite} onChange={(e) => set(e.target.checked)} /><b>Invite new members automatically</b></label>
+      <small className="muted">
+        When someone joins a server KREO is in, KREO DMs them the Join KREO button. Only people who join from now on, never everyone already there, and never anyone who was already invited.
+        {!membersIntent && <> <b>Needs Server Members Intent</b> switched on for the KREO app in the Discord Developer Portal (Bot tab), then press Restart above.</>}
+      </small>
+    </div>
   );
 }
 

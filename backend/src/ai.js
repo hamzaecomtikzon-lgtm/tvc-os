@@ -327,4 +327,49 @@ export const ai = {
 
     return tidyCommunity(out, Object.keys(AUTOS));
   },
+
+  /**
+   * KREO creator search: turn a brand's plain-words request ("L1 or L2 health creators in the US with
+   * 10k+ followers") into filters. Returns `{ levels, niches, countries, minFollowers, maxFollowers,
+   * minGmv, maxGmv, text, sort, summary }` (0 means no limit), or null when the model declined.
+   */
+  async creatorQuery({ query, niches, countries, levels }) {
+    client ||= new Anthropic();
+    const system = [
+      "You turn a brand's request for TikTok Shop creators into search filters for a creator database. Only fill a filter when the request asks for it; leave the rest empty (empty list, 0, or \"\").",
+      "levels: TikTok creator levels as integers 0–7. The ladder (by 30-day GMV): " + levels.map((l) => `L${l.level} ${l.badge}`).join(", ") + ". \"L2+\" means 2 through 7; a badge name (\"gold\") means its level.",
+      "niches: from this list only: " + niches.join("; ") + ". Map words like supplements, vitamins, wellness → Health & wellness; skincare, makeup → Beauty & skincare.",
+      "countries: ISO codes from this list only: " + countries.map(([c, n]) => `${c} (${n})`).join(", ") + ".",
+      "minFollowers / maxFollowers: TikTok followers. minGmv / maxGmv: 30-day GMV in US dollars. \"10k\" = 10000, \"1.5M\" = 1500000.",
+      "text: leftover words to match against handles or names (usually empty).",
+      "sort: gmv (default), followers, level or newest.",
+      "summary: one short sentence describing what you searched for, e.g. \"L1–L2 health creators in the US with 10k+ followers\".",
+    ].join("\n\n");
+    const int = { type: "integer" };
+    const res = await client.beta.messages.create({
+      model: MODEL,
+      max_tokens: 1500,
+      betas: ["server-side-fallback-2026-07-01"],
+      fallbacks: "default",
+      output_config: {
+        effort: "low",
+        format: {
+          type: "json_schema",
+          schema: obj({
+            levels: { type: "array", items: int },
+            niches: { type: "array", items: { type: "string", enum: niches } },
+            countries: { type: "array", items: { type: "string", enum: countries.map(([c]) => c) } },
+            minFollowers: int, maxFollowers: int, minGmv: int, maxGmv: int,
+            text: str,
+            sort: { type: "string", enum: ["gmv", "followers", "level", "newest"] },
+            summary: str,
+          }),
+        },
+      },
+      system,
+      messages: [{ role: "user", content: query.slice(0, 500) }],
+    });
+    if (res.stop_reason === "refusal") return null;
+    return JSON.parse(res.content.filter((b) => b.type === "text").map((b) => b.text).join(""));
+  },
 };

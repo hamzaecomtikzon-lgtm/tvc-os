@@ -19,7 +19,7 @@ const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || "");
 /** Every field a creator row from listCreators carries (live or sample). level is TikTok's L0–L7 (L1–L9 in UK/EU), null when unknown. */
 export const EMPTY_CREATOR = {
   handle: "", name: "", email: "", phone: null, whatsapp: null, avatar: null,
-  level: null, followers: null, platformGmv: null,
+  level: null, followers: null, platformGmv: null, categories: [], language: "", engagement: null,
   gmv: 0, sales: 0, units: 0, commission: 0, videos: 0, lives: 0, views: 0, likes: 0, comments: 0,
 };
 
@@ -381,6 +381,9 @@ function makeLive(apiKey) {
         if (x.follower_cnt != null) r.followers = num(x.follower_cnt);
         if (x.med_gmv_revenue != null) r.platformGmv = num(x.med_gmv_revenue);
         if (x.avatar_url) r.avatar = x.avatar_url;
+        if (Array.isArray(x.category) && x.category.length) r.categories = x.category.slice(0, 5).map(String);
+        if (x.language) r.language = String(x.language);
+        if (x.engagement_rate != null) r.engagement = num(x.engagement_rate);
       };
       for (const c of contacts) {
         if (!c.handle) continue;

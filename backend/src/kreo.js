@@ -72,6 +72,8 @@ export function recordKreo({ userId, name = "", channelId = null, guildId = null
 }
 /** Called with every DM a person sends KREO (after it's saved). creators.js uses it to answer "join". */
 export const kreoDmHooks = [];
+/** Called when someone joins a server KREO is in (needs the Server Members intent). creators.js auto-invites them. */
+export const kreoMemberHooks = [];
 
 /* ---------- live events (KREO's gateway only) ---------- */
 
@@ -85,6 +87,9 @@ export async function onKreoEvent(type, d) {
   } else if (type === "GUILD_DELETE") {
     if (!d.unavailable) live.delete(d.id);
     inGuildCache.delete(d.id);
+  } else if (type === "GUILD_MEMBER_ADD") {
+    if (d.user?.bot) return;
+    for (const hook of kreoMemberHooks) await Promise.resolve(hook(d)).catch((e) => console.error("[kreo member hook]", e.message));
   } else if (type === "MESSAGE_CREATE") {
     // A creator writing to KREO in its DMs. Server messages and KREO's own messages are ignored.
     if (d.guild_id || d.author?.bot || q.seen.get(d.id)) return;

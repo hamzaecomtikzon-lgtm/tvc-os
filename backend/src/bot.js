@@ -9,6 +9,7 @@ import { ai } from "./ai.js";
 import { ymd } from "./dates.js";
 import { approveDrafts, autosOf, cfgOf, obOf, reviewable, startJob, tellMods } from "./jobs.js";
 import * as audit from "./audit.js";
+import { outreachJoined, outreachReplied } from "./search.js";
 
 const now = () => new Date().toISOString();
 const PHONE_RE = /(\+?\d[\d\s().-]{7,}\d)/;
@@ -265,9 +266,12 @@ function onMemberAdd(d) {
   doc.list = [...doc.list.filter((m) => m.id !== row.id), row];
   store.set(ns, "members/" + d.guild_id, doc);
   if (row.bot) return;
+  // Someone the brand reached out to through KREO creator search just joined: the bot picks up the conversation.
+  const followUp = () => outreachJoined(ns, g, row).catch((e) => console.error("[outreach]", e.message));
   const on = autosOf(ns, d.guild_id).onboarding?.enabled !== false && cfgOf(ns, d.guild_id).dmNew !== false;
-  if (on && store.get(ns, "workspace/main")?.done) {
-    return startOnboarding(ns, g, row).then(() => {
+  if (!on || !store.get(ns, "workspace/main")?.done) return followUp();
+  {
+    return startOnboarding(ns, g, row).then(followUp).then(() => {
       const t = store.get(ns, "dms/" + row.id);
       audit.log(ns, audit.BOT, t?.status === "closed"
         ? { category: "onboarding", action: "onboarding.welcome_failed", label: row.name, summary: `${row.name} joined the server, but the welcome DM couldn’t be delivered: ${t.error || "DMs are closed"}` }
@@ -378,6 +382,7 @@ async function onDm(d) {
     }
   }
   store.set(ns, "dms/" + t.userId, t);
+  outreachReplied(ns, t.userId, text);
   if (finished && g) await onboardingDone(ns, g, t, ob);
 }
 

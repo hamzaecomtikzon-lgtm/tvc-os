@@ -19,13 +19,14 @@ import Content from "./pages/Content.jsx";
 import Settings from "./pages/Settings.jsx";
 import AuditLogs from "./pages/AuditLogs.jsx";
 import KreoBot from "./pages/KreoBot.jsx";
+import CreatorSearch from "./pages/CreatorSearch.jsx";
 import Landing from "./pages/Landing.jsx";
 import Auth from "./pages/Auth.jsx";
 import Join from "./pages/Join.jsx";
 import SetupOverlay from "./pages/SetupOverlay.jsx";
 
-const PAGES = { dashboard: Dashboard, analytics: Analytics, approvals: Approvals, automations: Automations, "automation-builder": Builder, onboarding: Onboarding, content: Content, workspace: Settings, "audit-logs": AuditLogs, "kreo-bot": KreoBot };
-const NAV = [["dashboard", "Dashboard", "home"], ["analytics", "Analytics", "chart"], ["approvals", "Approvals", "check"], ["automations", "Automations", "bolt"], ["onboarding", "Onboarding & DMs", "chat"], ["content", "Content", "play"]];
+const PAGES = { dashboard: Dashboard, analytics: Analytics, approvals: Approvals, automations: Automations, "automation-builder": Builder, onboarding: Onboarding, content: Content, workspace: Settings, "audit-logs": AuditLogs, "kreo-bot": KreoBot, "creator-search": CreatorSearch };
+const NAV = [["dashboard", "Dashboard", "home"], ["analytics", "Analytics", "chart"], ["creator-search", "Creator search", "search"], ["approvals", "Approvals", "check"], ["automations", "Automations", "bolt"], ["onboarding", "Onboarding & DMs", "chat"], ["content", "Content", "play"]];
 const TRIAL_DAYS = 14;
 
 const AUTH_ROUTES = ["signin", "signup"];

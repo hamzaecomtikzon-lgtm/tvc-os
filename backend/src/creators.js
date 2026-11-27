@@ -9,7 +9,9 @@
  *   3. They're saved here, and their numbers (30-day GMV, sales, videos) are read from the CRM of the
  *      brand whose server they came from, with their TikTok level (levels.js: L0 Bronze … L7 Diamond).
  * Creators can come back to the same link to update their details or leave (which hides them).
- * Anyone who messages KREO "join" gets a fresh link.
+ * Anyone who messages KREO "join" gets a fresh link, and (when on) new members of a server KREO is in get
+ * the invite automatically: only people who join from now on, never everyone already there.
+ * Joined creators' numbers are refreshed from the CRM once a day.
  *
  * Sample creators (sample = 1) are made-up rows for testing search. They aren't real Discord users,
  * so they can never be messaged, and one call removes them all.
@@ -22,15 +24,16 @@
  *   DELETE /api/kreo/creators/samples       platform admins: remove every sample creator
  *   POST   /api/kreo/creators/<id>/refresh  platform admins: re-read their numbers from the CRM
  *   DELETE /api/kreo/creators/<id>          platform admins: delete one creator
+ *   GET|PUT /api/kreo/settings              platform admins: { autoInvite }
  */
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { sql, store } from "./store.js";
 import { deriveKey } from "./crmKeys.js";
 import { LEVELS, levelOf, normalizeLevel } from "./levels.js";
-import { crmFor } from "./crm.js";
+import { crmFor, crmSource } from "./crm.js";
 import { addDays, todayUTC, ymd } from "./dates.js";
 import { DiscordError } from "./discord.js";
-import { KREO_COLOR, avatarOf, isPlatformAdmin, kreo, kreoDmHooks, kreoGuildName, nameOf, recordKreo, why } from "./kreo.js";
+import { KREO_COLOR, avatarOf, isPlatformAdmin, kreo, kreoDmHooks, kreoGuildName, kreoMemberHooks, nameOf, recordKreo, why } from "./kreo.js";
 
 export const NICHES = ["Health & wellness", "Beauty & skincare", "Fashion", "Fitness", "Food & drink", "Home & kitchen", "Tech & gadgets", "Pets", "Baby & kids", "Lifestyle", "Other"];
 export const COUNTRIES = [["US", "United States"], ["GB", "United Kingdom"], ["CA", "Canada"], ["AU", "Australia"], ["DE", "Germany"], ["FR", "France"], ["IT", "Italy"], ["ES", "Spain"], ["MX", "Mexico"], ["BR", "Brazil"], ["PH", "Philippines"], ["MY", "Malaysia"], ["ID", "Indonesia"], ["TH", "Thailand"], ["VN", "Vietnam"], ["SG", "Singapore"], ["PK", "Pakistan"], ["IN", "India"], ["AE", "United Arab Emirates"], ["SA", "Saudi Arabia"], ["OTHER", "Somewhere else"]];
@@ -173,13 +176,43 @@ export async function metricsFor(c) {
       out.videos += hit.videos || 0;
       out.views += hit.views || 0;
       out.sources.push(store.owner(ns)?.brand || shop.name);
-      if (hit.platformGmv != null) out.platformGmv = Math.max(out.platformGmv ?? 0, hit.platformGmv);
-      if (hit.followers != null) out.followers = Math.max(out.followers ?? 0, hit.followers);
-      const lv = normalizeLevel(hit.level, hit.platformGmv);
-      if (lv != null) out.level = Math.max(out.level ?? 0, lv);
+      out.likes = (out.likes || 0) + (hit.likes || 0);
+      out.comments = (out.comments || 0) + (hit.comments || 0);
+      out.units = (out.units || 0) + (hit.units || 0);
+      out.commission = Math.round(((out.commission || 0) + (hit.commission || 0)) * 100) / 100;
+      takeProfile(out, hit);
+    }
+  }
+  // Level, followers and platform-wide GMV describe the creator, not a shop: when the brands they came
+  // from don't know them, look them up in other brands' live CRMs (profile only, never those shops' sales).
+  if (out.level == null && out.followers == null) {
+    const seen = new Set(brands.map((b) => b.ns));
+    const others = store.workspaces().filter(({ ns }) => !seen.has(ns) && crmSource(ns) === "cruva").slice(0, 10);
+    for (const { ns } of others) {
+      const crm = crmFor(ns);
+      let shops = [];
+      try { shops = await crm.listShops(); } catch { continue; }
+      for (const shop of shops) {
+        let rows = [];
+        try { rows = await crm.listCreators({ shop_id: shop.id, date_from, date_to }); } catch { continue; }
+        const hit = rows.find((r) => String(r.handle).toLowerCase() === handle);
+        if (hit) { takeProfile(out, hit); out.found = true; out.profileOnly = !out.sources.length; }
+      }
+      if (out.level != null || out.followers != null) break;
     }
   }
   return out;
+}
+
+/** Creator-level fields (not a shop's sales) from a CRM row. */
+function takeProfile(out, hit) {
+  if (hit.platformGmv != null) out.platformGmv = Math.max(out.platformGmv ?? 0, hit.platformGmv);
+  if (hit.followers != null) out.followers = Math.max(out.followers ?? 0, hit.followers);
+  if (hit.categories?.length) out.categories = [...new Set([...(out.categories || []), ...hit.categories])].slice(0, 6);
+  if (hit.language) out.language = hit.language;
+  if (hit.engagement != null) out.engagement = hit.engagement;
+  const lv = normalizeLevel(hit.level, hit.platformGmv);
+  if (lv != null) out.level = Math.max(out.level ?? 0, lv);
 }
 async function refresh(c) {
   const metrics = await Promise.race([metricsFor(c), new Promise((r) => setTimeout(() => r(undefined), 15_000))]).catch(() => undefined);
@@ -255,7 +288,7 @@ async function joinPost(token, body) {
 }
 
 /* ---------- sending from KREO ---------- */
-async function dmCreator(c, title, text, button) {
+export async function dmCreator(c, title, text, button) {
   let channelId = null;
   try {
     channelId = (await kreo.call("POST", "/users/@me/channels", { recipient_id: c.id })).id;
@@ -331,6 +364,54 @@ kreoDmHooks.push(async (d) => {
     { label: c?.status === "joined" ? "Open KREO" : "Join KREO", url });
 });
 
+/* ---------- settings ---------- */
+const SETTINGS = ["_platform", "settings/kreo"];
+export const kreoSettings = () => ({ autoInvite: true, ...(store.get(...SETTINGS) || {}) });
+
+/* ---------- auto-invite: people who join a server KREO is in, from now on ---------- */
+const autoQueue = [];
+let autoBusy = false, autoHour = { at: 0, n: 0 };
+const AUTO_PER_HOUR = 120, AUTO_SPACING = 3000; // gentle on Discord: no bursts of DMs
+
+kreoMemberHooks.push((d) => {
+  if (!kreoSettings().autoInvite || !d.user?.id || d.user.bot || !appUrl()) return;
+  if (getCreator(d.user.id)) return; // already invited, joined or left: never pester them again
+  autoQueue.push(d);
+  if (!autoBusy) drainAuto();
+});
+async function drainAuto() {
+  autoBusy = true;
+  try {
+    while (autoQueue.length) {
+      if (Date.now() - autoHour.at > 3600_000) autoHour = { at: Date.now(), n: 0 };
+      if (autoHour.n >= AUTO_PER_HOUR) { autoQueue.length = 0; break; } // a raid or a huge import: skip the rest
+      const d = autoQueue.shift();
+      if (getCreator(d.user.id)) continue;
+      autoHour.n++;
+      const server = await serverName(d.guild_id);
+      const name = d.nick || nameOf(d.user);
+      const c = save({ id: d.user.id, status: "invited", discordName: name, discordUser: d.user.username, avatar: avatarOf(d.user), sourceGuild: d.guild_id, sourceGuildName: server, guilds: [d.guild_id], invitedAt: now(), invitedBy: "auto" });
+      await dmCreator(c, "Join KREO", inviteText(name, server), { label: "Join KREO", url: joinUrl(c.id, d.guild_id) });
+      await new Promise((r) => setTimeout(r, AUTO_SPACING));
+    }
+  } finally {
+    autoBusy = false;
+  }
+}
+
+/* ---------- daily refresh of joined creators' numbers ---------- */
+const DAY = 24 * 3600_000;
+export async function refreshStale(limit = 25) {
+  const stale = q.all.all().map(read).filter((c) => !c.sample && c.status === "joined" && c.tiktok && (!c.metrics?.at || Date.now() - Date.parse(c.metrics.at) > DAY)).slice(0, limit);
+  for (const c of stale) await refresh(c);
+  return stale.length;
+}
+export function startCreatorRefresh() {
+  const run = () => refreshStale().catch((e) => console.error("[kreo refresh]", e.message));
+  setTimeout(run, 60_000).unref();
+  setInterval(run, 3600_000).unref();
+}
+
 /* ---------- sample creators (for testing search) ---------- */
 const FIRST = ["Ava", "Mia", "Zoe", "Lily", "Emma", "Nora", "Ella", "Ruby", "Isla", "Leah", "Maya", "Sara", "Jade", "Amir", "Omar", "Leo", "Kai", "Noah", "Liam", "Eli", "Hana", "Aisha", "Sofia", "Lucas", "Dani"];
 const WORDS = { "Health & wellness": ["wellness", "healthy", "vitamins", "glow"], "Beauty & skincare": ["beauty", "skin", "glam", "makeup"], Fashion: ["style", "fits", "closet", "ootd"], Fitness: ["fit", "gym", "lifts", "moves"], "Food & drink": ["eats", "kitchen", "snacks", "cooks"], "Home & kitchen": ["home", "finds", "nest", "decor"], "Tech & gadgets": ["tech", "gadgets", "unbox", "setup"], Pets: ["pets", "paws", "pup", "kitty"], "Baby & kids": ["mama", "baby", "littles", "momlife"], Lifestyle: ["daily", "life", "vlogs", "finds"] };
@@ -358,7 +439,10 @@ export function loadSamples(n = 50) {
       id: `sample-${String(i + 1).padStart(2, "0")}`, sample: true, status: "joined", consent: true,
       discordName: `${first} ${"ABCDEFGHJKLMNPRSTW"[i % 18]}. (sample)`, discordUser: tiktok.replace(/\./g, "_"), avatar: null,
       tiktok, niche, country: pick(countries), sourceGuild: null, sourceGuildName: "Sample data", guilds: [],
-      metrics: { gmv, sales, videos: Math.round(2 + rnd() * 40), views: Math.round(gmv * (20 + rnd() * 80)), followers: Math.round(800 + rnd() * 400_000), found: true, sources: ["Sample data"], at: joined },
+      metrics: (() => {
+        const views = Math.round(gmv * (20 + rnd() * 80));
+        return { gmv, platformGmv: gmv, sales, units: Math.round(sales * (1 + rnd() * 0.3)), commission: Math.round(gmv * 0.12 * 100) / 100, videos: Math.round(2 + rnd() * 40), views, likes: Math.round(views * (0.02 + rnd() * 0.06)), comments: Math.round(views * 0.002), engagement: Math.round((2 + rnd() * 8) * 10) / 10, followers: Math.round(800 + rnd() * 400_000), language: pick(["english", "english", "spanish"]), categories: [niche], found: true, sources: ["Sample data"], at: joined };
+      })(),
       level: levelOf(gmv), joinedAt: joined, invitedAt: joined,
     });
   }
@@ -400,6 +484,12 @@ export async function creatorsRoute({ p, m, user, readJson, url }) {
   if (p === "/api/kreo/invite" && m === "POST") {
     if (!kreo.configured()) throw fail(503, "The KREO bot token isn’t set.", "not_configured");
     return invite(user, await readJson());
+  }
+  if (p === "/api/kreo/settings" && m === "GET") return kreoSettings();
+  if (p === "/api/kreo/settings" && m === "PUT") {
+    const b = await readJson();
+    store.set(...SETTINGS, { ...kreoSettings(), ...(typeof b.autoInvite === "boolean" ? { autoInvite: b.autoInvite } : {}), by: user.email, at: now() });
+    return kreoSettings();
   }
   if (p === "/api/kreo/creators/samples" && m === "POST") return { added: loadSamples(), ...list({}) };
   if (p === "/api/kreo/creators/samples" && m === "DELETE") return { removed: Number(q.delSamples.run().changes), ...list({}) };

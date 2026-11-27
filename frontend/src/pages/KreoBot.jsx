@@ -98,7 +98,7 @@ export default function KreoBot() {
           </section>
         )}
 
-        {st.configured && st.bot && st.guilds.length > 0 && <InviteCreators guilds={st.guilds} onSent={() => setSentAt(Date.now())} />}
+        {st.configured && st.bot && st.guilds.length > 0 && <InviteCreators guilds={st.guilds} membersIntent={st.intents?.members && st.gateway?.members} onSent={() => setSentAt(Date.now())} />}
         <CreatorDatabase reloadKey={sentAt} />
 
         {st.configured && st.bot && st.guilds.length > 0 && <TestDm guilds={st.guilds} botName={st.bot.name} botAvatar={st.bot.avatar} />}

@@ -12,6 +12,7 @@ export const TABS = {
   workspace: "Settings",
   "audit-logs": "Audit logs",
   "kreo-bot": "KREO bot",
+  "creator-search": "Creator search",
 };
 
 export const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
